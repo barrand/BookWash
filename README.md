@@ -7,7 +7,7 @@ If you've ever wished you could just *wash* the questionable parts out of a book
 BookWash is a desktop application built with Flutter that allows you to "wash" your EPUB books. It uses the power of Google's Gemini AI to analyze and filter content based on your preferred sensitivity levels.
 
 ![BookWash Setup Screen](https://imgur.com/8P2JXcH) 
-![BookWash In Action]https://imgur.com/DnLEmBJ
+![BookWash In Action](https://imgur.com/DnLEmBJ)
 ## Features
 
 *   **Process EPUB Files**: Select any EPUB file from your local drive.
