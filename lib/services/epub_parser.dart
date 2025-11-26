@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 import 'package:html/parser.dart' as html_parser;
+import 'package:path/path.dart' as path;
 
 /// Represents metadata extracted from an EPUB file
 class EpubMetadata {
@@ -9,12 +10,14 @@ class EpubMetadata {
   final String author;
   final String identifier;
   final String language;
+  final XmlElement originalMetadataElement; // Keep the original XML element
 
   EpubMetadata({
     required this.title,
     required this.author,
     required this.identifier,
     this.language = 'en',
+    required this.originalMetadataElement,
   });
 
   @override
@@ -49,12 +52,18 @@ class ParsedEpub {
   final List<EpubChapter> chapters;
   final Archive archive; // Keep original archive for reconstruction
   final Map<String, ArchiveFile> fileMap; // Map of all files in EPUB
+  final String? coverImageId;
+  final String? coverImageHref;
+  final String? coverImageMediaType;
 
   ParsedEpub({
     required this.metadata,
     required this.chapters,
     required this.archive,
     required this.fileMap,
+    this.coverImageId,
+    this.coverImageHref,
+    this.coverImageMediaType,
   });
 
   int get totalParagraphs =>
@@ -90,14 +99,51 @@ class EpubParser {
     final opfContent = String.fromCharCodes(opfFile.content as List<int>);
     final opfDocument = XmlDocument.parse(opfContent);
 
+    // Build manifest map (id -> {href, media-type})
+    final manifestItems = opfDocument
+        .findAllElements('manifest')
+        .first
+        .findElements('item');
+    final manifestMap = <String, Map<String, String>>{};
+    for (final item in manifestItems) {
+      final id = item.getAttribute('id');
+      final href = item.getAttribute('href');
+      final mediaType = item.getAttribute('media-type');
+      if (id != null && href != null && mediaType != null) {
+        manifestMap[id] = {'href': href, 'media-type': mediaType};
+      }
+    }
+
     // Extract metadata
     final metadata = _extractMetadata(opfDocument);
+
+    // Find cover image details
+    String? coverImageId;
+    String? coverImageHref;
+    String? coverImageMediaType;
+    final metaItems = metadata.originalMetadataElement.findElements('meta');
+    final coverMeta = metaItems
+        .where((m) => m.getAttribute('name') == 'cover')
+        .firstOrNull;
+
+    if (coverMeta != null) {
+      final coverId = coverMeta.getAttribute('content');
+      if (coverId != null && manifestMap.containsKey(coverId)) {
+        final opfDir = opfPath.contains('/')
+            ? opfPath.substring(0, opfPath.lastIndexOf('/'))
+            : '';
+        coverImageId = coverId;
+        coverImageHref = path.join(opfDir, manifestMap[coverId]!['href']!);
+        coverImageMediaType = manifestMap[coverId]!['media-type'];
+      }
+    }
 
     // Extract chapter information from spine and manifest
     final chapters = await _extractChapters(
       opfDocument,
       opfPath,
       fileMap,
+      manifestMap,
     );
 
     return ParsedEpub(
@@ -105,6 +151,9 @@ class EpubParser {
       chapters: chapters,
       archive: archive,
       fileMap: fileMap,
+      coverImageId: coverImageId,
+      coverImageHref: coverImageHref,
+      coverImageMediaType: coverImageMediaType,
     );
   }
 
@@ -115,8 +164,9 @@ class EpubParser {
       orElse: () => throw Exception('META-INF/container.xml not found'),
     );
 
-    final containerContent =
-        String.fromCharCodes(containerFile.content as List<int>);
+    final containerContent = String.fromCharCodes(
+      containerFile.content as List<int>,
+    );
     final containerDoc = XmlDocument.parse(containerContent);
 
     final rootfile = containerDoc.findAllElements('rootfile').first;
@@ -131,16 +181,16 @@ class EpubParser {
 
   /// Extract metadata from OPF document
   static EpubMetadata _extractMetadata(XmlDocument opfDocument) {
-    final metadata = opfDocument.findAllElements('metadata').first;
+    final metadataElement = opfDocument.findAllElements('metadata').first;
 
     String getMetadataValue(String tagName, {String defaultValue = ''}) {
       try {
-        return metadata.findElements(tagName).first.innerText.trim();
+        return metadataElement.findElements(tagName).first.innerText.trim();
       } catch (_) {
         // Try with dc: namespace
         try {
           final dcNamespace = 'http://purl.org/dc/elements/1.1/';
-          return metadata
+          return metadataElement
               .findElements(tagName, namespace: dcNamespace)
               .first
               .innerText
@@ -154,9 +204,12 @@ class EpubParser {
     return EpubMetadata(
       title: getMetadataValue('title', defaultValue: 'Unknown Title'),
       author: getMetadataValue('creator', defaultValue: 'Unknown Author'),
-      identifier:
-          getMetadataValue('identifier', defaultValue: 'unknown-identifier'),
+      identifier: getMetadataValue(
+        'identifier',
+        defaultValue: 'unknown-identifier',
+      ),
       language: getMetadataValue('language', defaultValue: 'en'),
+      originalMetadataElement: metadataElement.copy(),
     );
   }
 
@@ -165,19 +218,9 @@ class EpubParser {
     XmlDocument opfDocument,
     String opfPath,
     Map<String, ArchiveFile> fileMap,
+    Map<String, Map<String, String>> manifestMap,
   ) async {
-    final manifest = opfDocument.findAllElements('manifest').first;
     final spine = opfDocument.findAllElements('spine').first;
-
-    // Build manifest map (id -> href)
-    final manifestMap = <String, String>{};
-    for (final item in manifest.findElements('item')) {
-      final id = item.getAttribute('id');
-      final href = item.getAttribute('href');
-      if (id != null && href != null) {
-        manifestMap[id] = href;
-      }
-    }
 
     // Get base path from OPF location
     final basePath = opfPath.contains('/')
@@ -190,7 +233,9 @@ class EpubParser {
       final idref = itemref.getAttribute('idref');
       if (idref == null) continue;
 
-      final href = manifestMap[idref];
+      final manifestEntry = manifestMap[idref];
+      if (manifestEntry == null) continue;
+      final href = manifestEntry['href'];
       if (href == null) continue;
 
       // Construct full path to chapter file
@@ -199,8 +244,9 @@ class EpubParser {
       if (chapterFile == null) continue;
 
       // Parse chapter HTML
-      final htmlContent =
-          String.fromCharCodes(chapterFile.content as List<int>);
+      final htmlContent = String.fromCharCodes(
+        chapterFile.content as List<int>,
+      );
       final chapter = _parseChapterHtml(
         id: idref,
         href: chapterPath,

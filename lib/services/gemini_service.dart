@@ -1,3 +1,5 @@
+import 'package:bookwash/models/change_detail.dart';
+import 'package:bookwash/models/categorized_changes.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
@@ -9,6 +11,7 @@ class GeminiFilterResponse {
   final List<String>
   detectedChanges; // Specific replacements like "damn -> darn"
   final bool wasModified;
+  final CategorizedChanges categorizedChanges;
 
   GeminiFilterResponse({
     required this.cleanedText,
@@ -16,13 +19,18 @@ class GeminiFilterResponse {
     required this.removedWords,
     required this.detectedChanges,
     required this.wasModified,
+    required this.categorizedChanges,
   });
 
   factory GeminiFilterResponse.fromTexts({
     required String original,
     required String cleaned,
+    required int chapterIndex,
   }) {
     final wasModified = original.trim() != cleaned.trim();
+    final categorizedChanges = wasModified
+        ? _categorizeChanges(original, cleaned, chapterIndex)
+        : CategorizedChanges(profanity: [], sexual: [], violence: []);
     final removedWords = wasModified
         ? _detectRemovedWords(original, cleaned)
         : <String>[];
@@ -36,6 +44,103 @@ class GeminiFilterResponse {
       removedWords: removedWords,
       detectedChanges: detectedChanges,
       wasModified: wasModified,
+      categorizedChanges: categorizedChanges,
+    );
+  }
+
+  static CategorizedChanges _categorizeChanges(
+    String original,
+    String cleaned,
+    int chapterIndex,
+  ) {
+    final profanityChanges = <ChangeDetail>[];
+    final sexualChanges = <ChangeDetail>[];
+    final violenceChanges = <ChangeDetail>[];
+
+    final originalWords = original.toLowerCase().split(RegExp(r'\s+'));
+    final cleanedSet = cleaned.toLowerCase().split(RegExp(r'\s+')).toSet();
+
+    const profanityKeywords = {
+      'damn',
+      'shit',
+      'bullshit',
+      'crap',
+      'hell',
+      'ass',
+      'asshole',
+      'bitch',
+      'fuck',
+      'fucking',
+      'fucked',
+      'motherfucker',
+      'bastard',
+    };
+
+    const sexualKeywords = {
+      'cleavage',
+      'neckline',
+      'sexy',
+      'passionate',
+      'kiss',
+      'kissing',
+    };
+
+    const violenceKeywords = {
+      'punch',
+      'hit',
+      'fight',
+      'blood',
+      'kill',
+      'violence',
+      'weapon',
+    };
+
+    String obfuscateWord(String word) {
+      if (word.length <= 2) return '*' * word.length;
+      if (word.length == 3) return '${word[0]}*${word[2]}';
+      return '${word[0]}${'*' * (word.length - 2)}${word[word.length - 1]}';
+    }
+
+    for (final word in originalWords) {
+      final cleanWord = word.replaceAll(RegExp(r'[^\w]'), '');
+      if (cleanWord.isEmpty) continue;
+
+      if (!cleanedSet.contains(cleanWord)) {
+        if (profanityKeywords.contains(cleanWord)) {
+          profanityChanges.add(
+            ChangeDetail(
+              category: 'profanity',
+              obfuscatedWord: obfuscateWord(cleanWord),
+              chapterIndex: chapterIndex,
+              originalWord: cleanWord,
+            ),
+          );
+        } else if (sexualKeywords.contains(cleanWord)) {
+          sexualChanges.add(
+            ChangeDetail(
+              category: 'sexual',
+              obfuscatedWord: obfuscateWord(cleanWord),
+              chapterIndex: chapterIndex,
+              originalWord: cleanWord,
+            ),
+          );
+        } else if (violenceKeywords.contains(cleanWord)) {
+          violenceChanges.add(
+            ChangeDetail(
+              category: 'violence',
+              obfuscatedWord: obfuscateWord(cleanWord),
+              chapterIndex: chapterIndex,
+              originalWord: cleanWord,
+            ),
+          );
+        }
+      }
+    }
+
+    return CategorizedChanges(
+      profanity: profanityChanges,
+      sexual: sexualChanges,
+      violence: violenceChanges,
     );
   }
 
@@ -213,78 +318,83 @@ class GeminiService {
   Future<String> filterText({
     required String text,
     required String prompt,
+    void Function(Duration)? onRateLimit,
   }) async {
-    final requestBody = {
-      'contents': [
-        {
-          'parts': [
-            {'text': '$prompt\n\nText to filter:\n$text'},
-          ],
-        },
-      ],
-      'generationConfig': {
-        'temperature': 0.1,
-        'topP': 0.9,
-        'maxOutputTokens': 2048,
-      },
-      'safetySettings': [
-        {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
-        {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_NONE'},
-        {
-          'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-          'threshold': 'BLOCK_NONE',
-        },
-        {
-          'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
-          'threshold': 'BLOCK_NONE',
-        },
-      ],
-    };
+    int attempt = 0;
+    const maxAttempts = 5;
 
-    final response = await http
-        .post(
-          Uri.parse(
-            'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey',
-          ),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(requestBody),
-        )
-        .timeout(timeout);
+    while (attempt < maxAttempts) {
+      final requestBody = {
+        'contents': [
+          {
+            'parts': [
+              {'text': '$prompt\n\nText to filter:\n$text'},
+            ],
+          },
+        ],
+        'generationConfig': {
+          'temperature': 0.1,
+          'topP': 0.9,
+          'maxOutputTokens': 8192,
+        },
+        'safetySettings': [
+          {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
+          {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_NONE'},
+          {
+            'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+            'threshold': 'BLOCK_NONE',
+          },
+          {
+            'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+            'threshold': 'BLOCK_NONE',
+          },
+        ],
+      };
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final candidates = data['candidates'] as List<dynamic>?;
-      if (candidates != null && candidates.isNotEmpty) {
-        final content = candidates[0]['content'];
-        final parts = content['parts'] as List<dynamic>?;
-        if (parts != null && parts.isNotEmpty) {
-          return parts[0]['text'] as String? ?? '';
+      final response = await http
+          .post(
+            Uri.parse(
+              'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey',
+            ),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(requestBody),
+          )
+          .timeout(timeout);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        final candidates = data['candidates'] as List<dynamic>?;
+        if (candidates != null && candidates.isNotEmpty) {
+          final content = candidates[0]['content'];
+          final parts = content['parts'] as List<dynamic>?;
+          if (parts != null && parts.isNotEmpty) {
+            return parts[0]['text'] as String? ?? '';
+          }
         }
-      }
-      return '';
-    } else {
-      throw Exception(
-        'Gemini request failed with status ${response.statusCode}: ${response.body}',
-      );
-    }
-  }
+        return '';
+      } else if (response.statusCode == 429) {
+        // Rate limit exceeded
+        attempt++;
+        if (attempt >= maxAttempts) {
+          throw Exception(
+            'Gemini request failed after $maxAttempts attempts due to rate limiting.',
+          );
+        }
 
-  /// Normalize unicode characters to ASCII equivalents
-  String _normalizeText(String text) {
-    return text
-        // Replace em-dashes and en-dashes with regular hyphens
-        .replaceAll('\u2014', '-') // em dash
-        .replaceAll('\u2013', '-') // en dash
-        .replaceAll('\u2012', '-') // figure dash
-        // Replace curly quotes with straight quotes
-        .replaceAll('\u2018', "'") // left single quote
-        .replaceAll('\u2019', "'") // right single quote
-        .replaceAll('\u201C', '"') // left double quote
-        .replaceAll('\u201D', '"') // right double quote
-        // Replace ellipsis
-        .replaceAll('\u2026', '...') // ellipsis
-        // Remove any other problematic unicode characters
-        .replaceAll(RegExp(r'[^\x00-\x7F]+'), ''); // Remove non-ASCII
+        // Exponential backoff: 2s, 4s, 8s, 16s
+        final delay = Duration(seconds: 2 * (1 << (attempt - 1)));
+        print('Rate limit hit. Waiting for $delay before retrying...');
+        if (onRateLimit != null) {
+          onRateLimit(delay);
+        }
+        await Future.delayed(delay);
+      } else {
+        throw Exception(
+          'Gemini request failed with status ${response.statusCode}: ${response.body}',
+        );
+      }
+    }
+    throw Exception('Gemini request failed after $maxAttempts attempts.');
   }
 
   /// Filter a paragraph based on sensitivity levels
@@ -293,6 +403,8 @@ class GeminiService {
     required int profanityLevel,
     required int sexualContentLevel,
     required int violenceLevel,
+    required int chapterIndex,
+    void Function(Duration)? onRateLimit,
   }) async {
     // If all levels are 5 (Unrated), skip filtering entirely
     if (profanityLevel == 5 && sexualContentLevel == 5 && violenceLevel == 5) {
@@ -302,11 +414,13 @@ class GeminiService {
         removedWords: [],
         detectedChanges: [],
         wasModified: false,
+        categorizedChanges: CategorizedChanges(
+          profanity: [],
+          sexual: [],
+          violence: [],
+        ),
       );
     }
-
-    // Normalize input text to ASCII
-    final normalizedInput = _normalizeText(paragraph);
 
     final prompt = _buildFilteringPrompt(
       profanityLevel: profanityLevel,
@@ -314,14 +428,16 @@ class GeminiService {
       violenceLevel: violenceLevel,
     );
 
-    final cleanedText = await filterText(text: normalizedInput, prompt: prompt);
-
-    // Normalize output text as well to catch any issues
-    final normalizedOutput = _normalizeText(cleanedText);
+    final cleanedText = await filterText(
+      text: paragraph, // Send original text
+      prompt: prompt,
+      onRateLimit: onRateLimit,
+    );
 
     return GeminiFilterResponse.fromTexts(
       original: paragraph,
-      cleaned: normalizedOutput,
+      cleaned: cleanedText,
+      chapterIndex: chapterIndex,
     );
   }
 
@@ -548,7 +664,7 @@ class GeminiService {
       buffer.writeln('🎯 YOUR TASK:');
       buffer.writeln('1. Read each sentence/phrase/scene in the text');
       buffer.writeln(
-        '2. Ask yourself: \"What rating would this romantic/sexual content get?\" (G, PG, PG-13, R, or X)',
+        '2. Ask yourself: "What rating would this romantic/sexual content get?" (G, PG, PG-13, R, or X)',
       );
       buffer.writeln(
         '3. If the rating is HIGHER than ${_getRatingName(sexualContentLevel)}, remove or replace that content',
@@ -847,7 +963,10 @@ class ChapterRatingResponse {
 /// Extension to add rating method to GeminiService
 extension RatingExtension on GeminiService {
   /// Rate a chapter for content and return ratings
-  Future<ChapterRatingResponse> rateChapter({required String text}) async {
+  Future<ChapterRatingResponse> rateChapter({
+    required String text,
+    void Function(Duration)? onRateLimit,
+  }) async {
     final prompt =
         '''Analyze the following text and rate it for content in three categories.
 For each category, respond with ONLY one of: G, PG, PG-13, R, or X
@@ -883,7 +1002,11 @@ SUMMARY: [Brief 1-2 sentence summary of the most restrictive content]
 Text to analyze:''';
 
     try {
-      final result = await filterText(text: text, prompt: prompt);
+      final result = await filterText(
+        text: text,
+        prompt: prompt,
+        onRateLimit: onRateLimit,
+      );
 
       // Parse the response
       final lines = result.split('\n');

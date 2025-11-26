@@ -1,3 +1,5 @@
+import 'package:bookwash/models/change_detail.dart';
+import 'package:bookwash/models/categorized_changes.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -62,6 +64,9 @@ class _BookWashHomeState extends State<BookWashHome> {
   int totalParagraphs = 0;
   int processedParagraphs = 0;
   int modifiedParagraphs = 0;
+
+  // Change details
+  List<ChangeDetail> allCategorizedChanges = [];
 
   // Removal summaries by level
   Map<String, Map<int, int>> removalCounts = {
@@ -440,6 +445,7 @@ class _BookWashHomeState extends State<BookWashHome> {
       cleanedParagraphToChapter = {};
       pendingChanges = [];
       currentReviewIndex = 0;
+      allCategorizedChanges = [];
     });
 
     try {
@@ -493,6 +499,11 @@ class _BookWashHomeState extends State<BookWashHome> {
         'DEBUG: Total chapters in original: ${parsedEpub!.chapters.length}',
       );
 
+      // Show summary if changes were made
+      if (!isCancelling && allCategorizedChanges.isNotEmpty) {
+        _showSummaryDialog();
+      }
+
       // No approval flow - changes already applied during processing
       // Just show completion message
 
@@ -545,37 +556,6 @@ class _BookWashHomeState extends State<BookWashHome> {
             ),
           ),
         );
-      }
-    }
-  }
-
-  // Helper method to handle API calls with automatic retry on 429 (quota exceeded)
-  Future<T> _callGeminiWithRetry<T>(
-    Future<T> Function() apiCall,
-    String description,
-  ) async {
-    while (true) {
-      try {
-        return await apiCall();
-      } on Exception catch (e) {
-        final errorStr = e.toString();
-        // Check if this is a 429 rate limit error
-        if (errorStr.contains('429')) {
-          setState(() {
-            liveLogMessages.add(
-              '⏸️  Rate limited (429). Waiting 60 seconds before retrying $description...',
-            );
-          });
-          print('Rate limit hit. Waiting 60 seconds...');
-          await Future.delayed(const Duration(seconds: 60));
-          setState(() {
-            liveLogMessages.add('▶️  Resuming $description...');
-          });
-          // Retry the call
-          continue;
-        }
-        // For other exceptions, rethrow
-        rethrow;
       }
     }
   }
@@ -652,9 +632,16 @@ class _BookWashHomeState extends State<BookWashHome> {
         // FIRST PASS: Rate the chapter for content
         final chapterText = chapterParagraphs.join('\n\n');
         print('  Rating Chapter ${chapterIdx + 1} for content...');
-        final ratings = await _callGeminiWithRetry(
-          () => geminiService!.rateChapter(text: chapterText),
-          'rating Chapter ${chapterIdx + 1}',
+        final ratings = await geminiService!.rateChapter(
+          text: chapterText,
+          onRateLimit: (delay) {
+            setState(() {
+              liveLogMessages.add(
+                '⏸️ Rate limited. Waiting ${delay.inSeconds}s...',
+              );
+              _scrollToBottom();
+            });
+          },
         );
 
         setState(() {
@@ -700,14 +687,20 @@ class _BookWashHomeState extends State<BookWashHome> {
 
         // If chapter is small enough, send as one chunk
         if (chapterParagraphs.length <= maxParagraphsPerChunk) {
-          final response = await _callGeminiWithRetry(
-            () => geminiService!.filterParagraph(
-              paragraph: chapterText,
-              profanityLevel: profanityLevel,
-              sexualContentLevel: sexualContentLevel,
-              violenceLevel: violenceLevel,
-            ),
-            'filtering Chapter ${chapterIdx + 1}',
+          final response = await geminiService!.filterParagraph(
+            paragraph: chapterText,
+            profanityLevel: profanityLevel,
+            sexualContentLevel: sexualContentLevel,
+            violenceLevel: violenceLevel,
+            chapterIndex: chapterIdx,
+            onRateLimit: (delay) {
+              setState(() {
+                liveLogMessages.add(
+                  '⏸️ Rate limited. Waiting ${delay.inSeconds}s...',
+                );
+                _scrollToBottom();
+              });
+            },
           );
 
           // Split cleaned text back into paragraphs
@@ -725,6 +718,13 @@ class _BookWashHomeState extends State<BookWashHome> {
           if (response.wasModified) {
             setState(() {
               modifiedParagraphs += chapterParagraphs.length;
+              allCategorizedChanges.addAll(
+                response.categorizedChanges.profanity,
+              );
+              allCategorizedChanges.addAll(response.categorizedChanges.sexual);
+              allCategorizedChanges.addAll(
+                response.categorizedChanges.violence,
+              );
               final changesToLog = response.detectedChanges
                   .take(3)
                   .map((change) {
@@ -774,14 +774,20 @@ class _BookWashHomeState extends State<BookWashHome> {
               '  Processing chunk ${i ~/ maxParagraphsPerChunk + 1} (paragraphs ${i + 1}-$end)...',
             );
 
-            final response = await _callGeminiWithRetry(
-              () => geminiService!.filterParagraph(
-                paragraph: chunkText,
-                profanityLevel: profanityLevel,
-                sexualContentLevel: sexualContentLevel,
-                violenceLevel: violenceLevel,
-              ),
-              'filtering Chapter ${chapterIdx + 1} chunk ${i ~/ maxParagraphsPerChunk + 1}',
+            final response = await geminiService!.filterParagraph(
+              paragraph: chunkText,
+              profanityLevel: profanityLevel,
+              sexualContentLevel: sexualContentLevel,
+              violenceLevel: violenceLevel,
+              chapterIndex: chapterIdx,
+              onRateLimit: (delay) {
+                setState(() {
+                  liveLogMessages.add(
+                    '⏸️ Rate limited. Waiting ${delay.inSeconds}s...',
+                  );
+                  _scrollToBottom();
+                });
+              },
             );
 
             // Split cleaned text back into paragraphs
@@ -799,6 +805,15 @@ class _BookWashHomeState extends State<BookWashHome> {
             if (response.wasModified) {
               setState(() {
                 modifiedParagraphs += chunkParagraphs.length;
+                allCategorizedChanges.addAll(
+                  response.categorizedChanges.profanity,
+                );
+                allCategorizedChanges.addAll(
+                  response.categorizedChanges.sexual,
+                );
+                allCategorizedChanges.addAll(
+                  response.categorizedChanges.violence,
+                );
               });
             }
 
@@ -940,6 +955,144 @@ class _BookWashHomeState extends State<BookWashHome> {
         );
       }
     }
+  }
+
+  void _showSummaryDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Processing Summary'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: _buildSummaryContent(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSummaryContent() {
+    final profanityChanges = allCategorizedChanges
+        .where((c) => c.category == 'profanity')
+        .toList();
+    final sexualChanges = allCategorizedChanges
+        .where((c) => c.category == 'sexual')
+        .toList();
+    final violenceChanges = allCategorizedChanges
+        .where((c) => c.category == 'violence')
+        .toList();
+
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (profanityChanges.isNotEmpty)
+            _buildSummaryCategory(
+              'Profanity Changes',
+              profanityChanges,
+              Icons.volume_off,
+              Colors.orange,
+            ),
+          if (sexualChanges.isNotEmpty)
+            _buildSummaryCategory(
+              'Sexual Content Changes',
+              sexualChanges,
+              Icons.favorite_border,
+              Colors.pink,
+            ),
+          if (violenceChanges.isNotEmpty)
+            _buildSummaryCategory(
+              'Violence Changes',
+              violenceChanges,
+              Icons.shield_outlined,
+              Colors.red,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryCategory(
+    String title,
+    List<ChangeDetail> changes,
+    IconData icon,
+    Color color,
+  ) {
+    // Group by original word
+    final groupedByWord = <String, List<ChangeDetail>>{};
+    for (final change in changes) {
+      (groupedByWord[change.originalWord] ??= []).add(change);
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: color),
+                const SizedBox(width: 8),
+                Text(
+                  '$title (${changes.length} total)',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 16),
+            ...groupedByWord.entries.map((entry) {
+              final word = entry.key;
+              final wordChanges = entry.value;
+              final obfuscated = wordChanges.first.obfuscatedWord;
+              final count = wordChanges.length;
+
+              // Group by chapter
+              final chapters = wordChanges
+                  .map((c) => c.chapterIndex + 1)
+                  .toSet()
+                  .toList();
+              chapters.sort();
+              final chapterText = chapters.length > 1 ? 'Chapters' : 'Chapter';
+              final chapterList = chapters.join(', ');
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4.0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$obfuscated ($count):',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '$chapterText $chapterList',
+                        style: TextStyle(color: Colors.grey[400]),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ],
+        ),
+      ),
+    );
   }
 
   // Note: _applyApprovedChanges removed - changes now applied immediately during processing
@@ -1521,20 +1674,40 @@ class _BookWashHomeState extends State<BookWashHome> {
     Function(double) onChanged,
     List<String> labels,
   ) {
+    // Extract "G Rated", "PG Rated", etc. from the label.
+    final ratingName = labels[currentValue - 1]
+        .split(':')[0]
+        .substring(4)
+        .trim();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            ),
+            Text(
+              ratingName,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.blue[300],
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
         Slider(
           value: currentValue.toDouble(),
           min: 1,
           max: 5,
           divisions: 4,
-          label: currentValue.toString(),
+          label: ratingName,
           onChanged: onChanged,
         ),
         Text(

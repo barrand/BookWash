@@ -20,6 +20,21 @@ class EpubWriter {
       await _createStructure(tempDir);
       await _createMimetype(tempDir);
       await _createContainerXml(tempDir);
+
+      // Copy cover image if it exists
+      if (originalEpub.coverImageHref != null &&
+          originalEpub.fileMap.containsKey(originalEpub.coverImageHref)) {
+        final coverFile = originalEpub.fileMap[originalEpub.coverImageHref]!;
+        final coverOutputPath = path.join(
+          tempDir.path,
+          'OEBPS',
+          path.basename(originalEpub.coverImageHref!),
+        );
+        await File(
+          coverOutputPath,
+        ).writeAsBytes(coverFile.content as List<int>);
+      }
+
       await _createChapters(
         tempDir,
         originalEpub,
@@ -118,19 +133,35 @@ $paragraphsHtml
       spineItems.write('    <itemref idref="chapter_$i"/>\n');
     }
 
-    final escapedTitle = _escapeXml(originalEpub.metadata.title);
-    final escapedAuthor = _escapeXml(originalEpub.metadata.author);
-    final escapedIdentifier = _escapeXml(originalEpub.metadata.identifier);
+    // Add cover image to manifest if it exists
+    if (originalEpub.coverImageId != null &&
+        originalEpub.coverImageHref != null &&
+        originalEpub.coverImageMediaType != null) {
+      final coverFileName = path.basename(originalEpub.coverImageHref!);
+      manifestItems.writeln(
+        '    <item href="$coverFileName" id="${originalEpub.coverImageId}" media-type="${originalEpub.coverImageMediaType}"/>',
+      );
+    }
+
+    // Use original metadata, but update the title using a regular expression
+    String metadataString = originalEpub.metadata.originalMetadataElement
+        .toXmlString(pretty: true, indent: '  ');
+
+    final titleRegex = RegExp(
+      r'(<(\w+:)?title[^>]*>)(.*?)(</(\w+:)?title>)',
+      caseSensitive: false,
+      dotAll: true,
+    );
+
+    metadataString = metadataString.replaceFirstMapped(titleRegex, (match) {
+      final originalTitle = match.group(3) ?? '';
+      return '${match.group(1)}${originalTitle.trim()} (Cleaned)${match.group(4)}';
+    });
 
     final contentOpf =
         '''<?xml version='1.0' encoding='utf-8'?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uuid_id" version="2.0">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-    <dc:title>$escapedTitle</dc:title>
-    <dc:creator>$escapedAuthor</dc:creator>
-    <dc:language>en</dc:language>
-    <dc:identifier id="uuid_id">$escapedIdentifier</dc:identifier>
-  </metadata>
+  $metadataString
   <manifest>
     <item href="toc.ncx" id="ncx" media-type="application/x-dtbncx+xml"/>
 ${manifestItems.toString().trimRight()}
@@ -229,6 +260,12 @@ ${navPoints.toString().trimRight()}
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
-        .replaceAll("'", '&apos;');
+        .replaceAll("'", '&apos;')
+        .replaceAll('\u2019', '&apos;') // Right single quote
+        .replaceAll('\u2018', '&apos;') // Left single quote
+        .replaceAll('\u201D', '&quot;') // Right double quote
+        .replaceAll('\u201C', '&quot;') // Left double quote
+        .replaceAll('\u2014', '&#8212;') // Em dash
+        .replaceAll('\u2013', '&#8211;'); // En dash
   }
 }

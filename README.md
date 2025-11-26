@@ -7,7 +7,11 @@ If you've ever wished you could just *wash* the questionable parts out of a book
 BookWash is a desktop application built with Flutter that allows you to "wash" your EPUB books. It uses the power of Google's Gemini AI to analyze and filter content based on your preferred sensitivity levels.
 
 ![BookWash Setup Screen](https://i.imgur.com/8P2JXcH.png) 
+Here is the setup screen that you'll see when running the app.
+
 ![BookWash In Action](https://i.imgur.com/DnLEmBJ.png)
+Here is the cleaning screen when the app is doing it's magic.
+
 ## Features
 
 *   **Process EPUB Files**: Select any EPUB file from your local drive.
@@ -81,7 +85,7 @@ BookWash reads an EPUB file, breaks it down into its constituent chapters, and t
 
 **This is an experimental tool. The AI is not perfect and is subject to errors, biases, and inconsistencies.**
 
-*   **Accuracy is Not Guaranteed**: The AI may miss some content that should be filtered or may be overly aggressive and remove content that is benign. The quality of the output can vary significantly based on the complexity and nuance of the source material.
+*   **Accuracy is Not Guaranteed**: The AI misses content that should be filtered or may be overly aggressive and remove content that is benign. The quality of the output can vary significantly based on the complexity and nuance of the source material.
 *   **Narrative Impact**: While the AI is instructed to preserve the story, removing or rephrasing content can inevitably alter the narrative, change the tone, or create plot holes. This is especially true at stricter filtering levels (G and PG).
 *   **Context and Nuance**: AI models can struggle with context, sarcasm, and literary nuance. A passage may be flagged as inappropriate when it is not, or vice-versa.
 *   **Rate Limiting**: The app uses the free tier of the Gemini API, which has rate limits. Processing very long books may cause the app to hit these limits, in which case it will automatically pause and retry. This can significantly increase processing time.
