@@ -198,6 +198,24 @@ class GeminiService {
     }
   }
 
+  /// Normalize unicode characters to ASCII equivalents
+  String _normalizeText(String text) {
+    return text
+        // Replace em-dashes and en-dashes with regular hyphens
+        .replaceAll('\u2014', '-') // em dash
+        .replaceAll('\u2013', '-') // en dash
+        .replaceAll('\u2012', '-') // figure dash
+        // Replace curly quotes with straight quotes
+        .replaceAll('\u2018', "'") // left single quote
+        .replaceAll('\u2019', "'") // right single quote
+        .replaceAll('\u201C', '"') // left double quote
+        .replaceAll('\u201D', '"') // right double quote
+        // Replace ellipsis
+        .replaceAll('\u2026', '...') // ellipsis
+        // Remove any other problematic unicode characters
+        .replaceAll(RegExp(r'[^\x00-\x7F]+'), ''); // Remove non-ASCII
+  }
+
   /// Filter a paragraph based on sensitivity levels
   Future<GeminiFilterResponse> filterParagraph({
     required String paragraph,
@@ -215,17 +233,23 @@ class GeminiService {
       );
     }
 
+    // Normalize input text to ASCII
+    final normalizedInput = _normalizeText(paragraph);
+
     final prompt = _buildFilteringPrompt(
       profanityLevel: profanityLevel,
       sexualContentLevel: sexualContentLevel,
       violenceLevel: violenceLevel,
     );
 
-    final cleanedText = await filterText(text: paragraph, prompt: prompt);
+    final cleanedText = await filterText(text: normalizedInput, prompt: prompt);
+
+    // Normalize output text as well to catch any issues
+    final normalizedOutput = _normalizeText(cleanedText);
 
     return GeminiFilterResponse.fromTexts(
       original: paragraph,
-      cleaned: cleanedText,
+      cleaned: normalizedOutput,
     );
   }
 
@@ -241,24 +265,78 @@ class GeminiService {
       'You are a content filter for books. Your task is to clean the following text by removing or rephrasing inappropriate content based on the specified sensitivity levels.',
     );
     buffer.writeln();
-    buffer.writeln('CRITICAL RULES:');
+    buffer.writeln('CRITICAL RULES - FOLLOW EXACTLY:');
     buffer.writeln(
-      '1. Preserve the narrative flow and story coherence - the story must still make sense',
+      '1. Return ONLY the cleaned text itself - no explanations, no metadata, no commentary, no prefixes like "Here is..."',
     );
     buffer.writeln(
-      '2. Replace removed content with appropriate alternatives or use [...] for removed sections',
+      '2. NEVER use [...] or ellipses - always replace removed content with natural, flowing alternatives that maintain story coherence',
     );
     buffer.writeln(
-      '3. Keep all formatting, punctuation, and paragraph structure intact',
+      '3. CRITICAL PARAGRAPH STRUCTURE: Keep ALL paragraph breaks EXACTLY as they appear - use double line breaks (\\n\\n) between paragraphs',
     );
     buffer.writeln(
-      '4. Only modify content that violates the specified levels - be precise',
+      '4. DO NOT merge paragraphs together - maintain the same number of paragraphs as the input',
     );
     buffer.writeln(
-      '5. Return ONLY the cleaned text with no explanations, no metadata, no commentary',
+      '5. Keep ALL punctuation, formatting, quotation marks, and text structure EXACTLY as they appear',
     );
     buffer.writeln(
-      '6. Do not add any introductory phrases like "Here is the cleaned text:" - just return the text itself',
+      '6. CRITICAL CHARACTER ENCODING: Use ONLY basic ASCII characters (a-z, A-Z, 0-9, and standard punctuation like -.,;:!?\'")',
+    );
+    buffer.writeln(
+      '7. NEVER use unicode dashes, quotes, or special characters. Use regular hyphens (-), regular apostrophes, and regular quotes',
+    );
+    buffer.writeln(
+      '8. If you see characters like em-dashes or curly quotes in the original, keep them. Only avoid adding NEW unicode characters',
+    );
+    buffer.writeln(
+      '9. When removing content, use MINIMAL replacements - prefer simple phrases over creative elaboration',
+    );
+    buffer.writeln(
+      '10. DO NOT add new plot elements, details, or story content that was not in the original text',
+    );
+    buffer.writeln(
+      '11. DO NOT hallucinate or invent replacement content - keep it simple and vague',
+    );
+    buffer.writeln(
+      '12. Preserve the emotional tone and narrative voice - if a character is angry, keep them angry (just without prohibited words)',
+    );
+    buffer.writeln(
+      '13. The cleaned text must read naturally and smoothly - no awkward gaps or jumps',
+    );
+    buffer.writeln();
+    buffer.writeln('REPLACEMENT EXAMPLES:');
+    buffer.writeln('BAD: "Maya looked like [...] in public"');
+    buffer.writeln(
+      'GOOD: "Maya looked upset in public" or "Maya looked angry in public"',
+    );
+    buffer.writeln(
+      'BAD: "skin felt under her fingers-warm" (with weird dash character)',
+    );
+    buffer.writeln(
+      'GOOD: "skin felt under her fingers - warm" (with regular hyphen and spaces)',
+    );
+    buffer.writeln('BAD: "They [...] together that night"');
+    buffer.writeln(
+      'GOOD: "They spent the evening together" or "They stayed together that night"',
+    );
+    buffer.writeln(
+      'CRITICAL: Check your output text - if you see garbled characters, FIX THEM with regular ASCII characters',
+    );
+    buffer.writeln();
+    buffer.writeln('CRITICAL: For sexual content removal:');
+    buffer.writeln(
+      '- Use SIMPLE, VAGUE phrases: "they connected", "they were together", "later that evening"',
+    );
+    buffer.writeln(
+      '- DO NOT invent new activities or details (no "they talked", "they cooked dinner", "they watched movies")',
+    );
+    buffer.writeln(
+      '- DO NOT add story elements that were not present in the original',
+    );
+    buffer.writeln(
+      '- If the entire paragraph is sexual content, replace with a single simple sentence or remove entirely',
     );
     buffer.writeln();
 
@@ -273,9 +351,7 @@ class GeminiService {
           buffer.writeln(
             '- Remove: jerk, fool, dope, stupid, idiot, dumb, crap, damn, hell, ass, bitch, f-words, ALL curse words',
           );
-          buffer.writeln(
-            '- Replace with mild alternatives or [...] if no alternative fits',
-          );
+          buffer.writeln('- Replace with mild alternatives');
           buffer.writeln('- Result: suitable for all ages and young children');
           break;
         case 2: // PG Rated
@@ -323,36 +399,64 @@ class GeminiService {
             '- Remove ALL romantic and sexual content beyond basic plot necessity',
           );
           buffer.writeln(
-            '- Remove: kissing, romantic scenes, affection, attraction, physical intimacy',
+            '- Remove: kissing, romantic scenes, affection, attraction, physical intimacy of any kind',
           );
           buffer.writeln(
-            '- Remove: ALL body descriptions with sexual context (breasts, curves, physical attraction)',
+            '- Remove: ALL body descriptions with sexual or romantic context (breasts, curves, physical attraction, beauty)',
           );
           buffer.writeln(
-            '- Keep ONLY: factual relationships ("they were married", "they were together")',
+            '- Remove: ANY touching beyond handshakes or brief hugs',
           );
           buffer.writeln(
-            '- Replace sexual scenes with [...] or summary like "they spent time together"',
+            '- Remove: sleeping together, bedroom scenes, undressing, showering with romantic context',
           );
-          buffer.writeln('- Result: suitable for young children');
+          buffer.writeln(
+            '- Keep ONLY: factual relationships ("they were married", "they were together", "they were partners")',
+          );
+          buffer.writeln(
+            '- Replace with MINIMAL text: "they connected", "they were close", "their relationship continued"',
+          );
+          buffer.writeln(
+            '- DO NOT invent activities or details - keep replacements extremely simple and vague',
+          );
+          buffer.writeln(
+            '- Result: suitable for young children - completely non-romantic',
+          );
           break;
         case 2: // PG Rated
           buffer.writeln(
-            '- Remove suggestive content, sexual implications, and detailed romantic scenes',
+            '- Remove ALL suggestive content, sexual implications, sensuality, and detailed romantic scenes',
           );
           buffer.writeln(
-            '- Remove: passionate kissing, sensual descriptions, sexual tension, innuendo, body descriptions',
+            '- Remove: passionate kissing, sensual descriptions, sexual tension, innuendo, suggestive language',
           );
           buffer.writeln(
-            '- Remove: ANY descriptions of touching, intimacy, or physical attraction beyond hand-holding',
+            '- Remove: ALL body descriptions with romantic/sexual context (attractive, beautiful body, curves, physique, etc.)',
           );
           buffer.writeln(
-            '- Keep: "they fell in love", hand-holding, basic affection, chaste kissing',
+            '- Remove: ANY descriptions of touching beyond holding hands (no caressing, no intimate touching, no embracing with detail)',
           );
           buffer.writeln(
-            '- Replace intimate scenes with summary like "they grew closer"',
+            '- Remove: bedroom scenes, undressing descriptions, showering together, sleeping together with detail',
           );
-          buffer.writeln('- Result: family-friendly romance');
+          buffer.writeln(
+            '- Remove: arousal, desire, attraction beyond "they were attracted to each other"',
+          );
+          buffer.writeln(
+            '- Remove: thoughts of intimacy, self-pleasure, sexual fantasies, imagining intimate acts',
+          );
+          buffer.writeln(
+            '- Keep: "they fell in love", "they held hands", "he kissed her briefly", basic statements of affection',
+          );
+          buffer.writeln(
+            '- Replace with SIMPLE phrases: "they grew closer", "they connected", "later that night"',
+          );
+          buffer.writeln(
+            '- DO NOT invent new activities, conversations, or plot elements not in the original',
+          );
+          buffer.writeln(
+            '- Result: family-friendly romance with no sensuality whatsoever',
+          );
           break;
         case 3: // PG-13 Rated
           buffer.writeln(
@@ -365,12 +469,20 @@ class GeminiService {
             '- Remove: descriptions of arousal, explicit body descriptions, references to sexual organs',
           );
           buffer.writeln(
-            '- Keep: passionate kissing, romantic chemistry, mild innuendo, "they spent the night together"',
+            '- Remove: detailed descriptions of undressing, explicit bedroom scenes, graphic physical intimacy',
           );
           buffer.writeln(
-            '- Replace sex scenes with fade-to-black like "they moved to the bedroom" or "afterward, they..."',
+            '- Keep: passionate kissing, romantic chemistry, mild innuendo, "they spent the night together", vague physical attraction',
           );
-          buffer.writeln('- Result: teenage-appropriate romantic content');
+          buffer.writeln(
+            '- Replace with BRIEF fade-to-black: "they were together", "later that night", "afterward"',
+          );
+          buffer.writeln(
+            '- DO NOT elaborate on what happened - keep it extremely vague',
+          );
+          buffer.writeln(
+            '- Result: teenage-appropriate romantic content with clear but non-explicit intimacy',
+          );
           break;
         case 4: // R Rated
           buffer.writeln(
@@ -380,16 +492,19 @@ class GeminiService {
             '- Remove: explicit anatomical descriptions, graphic sex acts with extreme detail, pornographic language',
           );
           buffer.writeln(
-            '- Remove: detailed descriptions of sexual acts, explicit positions, graphic physical details',
+            '- Remove: detailed descriptions of sexual acts in graphic terms, explicit positions, clinical sexual details',
           );
           buffer.writeln(
-            '- Keep: "they made love", intimate scenes with some sensuality, references to sex without graphic detail',
+            '- Keep: "they made love", intimate scenes with sensuality, references to sex, romantic body descriptions',
           );
           buffer.writeln(
-            '- Tone down graphic sections while keeping the essence of the scene',
+            '- Tone down extremely graphic sections with simple language - avoid clinical or pornographic detail',
           );
           buffer.writeln(
-            '- Result: adult romantic/sexual content with extreme pornography removed',
+            '- DO NOT add flowery or elaborate descriptions - keep it straightforward',
+          );
+          buffer.writeln(
+            '- Result: adult romantic/sexual content with only the most extreme pornographic elements removed',
           );
           break;
       }

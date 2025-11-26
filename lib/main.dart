@@ -601,7 +601,24 @@ class _BookWashHomeState extends State<BookWashHome> {
         );
 
         // Split the cleaned text back into paragraphs
-        final cleanedChunkParagraphs = response.cleanedText.split('\n\n');
+        final cleanedChunkParagraphs = response.cleanedText
+            .split('\n\n')
+            .where((p) => p.trim().isNotEmpty)
+            .toList();
+
+        final originalParagraphCount = end - start;
+        print(
+          'Chunk $chunkIdx: Original had $originalParagraphCount paragraphs, cleaned has ${cleanedChunkParagraphs.length} paragraphs',
+        );
+
+        // If paragraph counts don't match, there may be an issue
+        if (cleanedChunkParagraphs.length != originalParagraphCount) {
+          print(
+            'WARNING: Paragraph count mismatch in chunk $chunkIdx! Original: $originalParagraphCount, Cleaned: ${cleanedChunkParagraphs.length}',
+          );
+          print('Original text length: ${chunkText.length} chars');
+          print('Cleaned text length: ${response.cleanedText.length} chars');
+        }
 
         // Add cleaned paragraphs
         for (int i = 0; i < cleanedChunkParagraphs.length; i++) {
@@ -611,9 +628,9 @@ class _BookWashHomeState extends State<BookWashHome> {
         // Track modifications
         if (response.wasModified) {
           setState(() {
-            modifiedParagraphs += (end - start);
+            modifiedParagraphs += originalParagraphCount;
             liveLogMessages.add(
-              'Chunk ${chunkIdx + 1}: Modified paragraphs $start-$end${response.removedWords.isNotEmpty ? " - Removed: ${response.removedWords.join(", ")}" : ""}',
+              'Chunk ${chunkIdx + 1}: Modified paragraphs $start-$end${response.removedWords.isNotEmpty ? " - Removed: ${response.removedWords.map(_obfuscateWord).join(", ")}" : ""}',
             );
           });
         }
@@ -1163,6 +1180,18 @@ class _BookWashHomeState extends State<BookWashHome> {
     );
   }
 
+  /// Obfuscate a word by replacing middle characters with asterisks
+  String _obfuscateWord(String word) {
+    if (word.length <= 2) {
+      return '*' * word.length;
+    } else if (word.length == 3) {
+      return '${word[0]}*${word[2]}';
+    } else {
+      final asterisks = '*' * (word.length - 2);
+      return '${word[0]}$asterisks${word[word.length - 1]}';
+    }
+  }
+
   /// Create log message for removed words
   String _createLogMessage(int paragraphNum, List<String> removedWords) {
     // Categorize words
@@ -1221,20 +1250,22 @@ class _BookWashHomeState extends State<BookWashHome> {
 
     final parts = <String>[];
 
-    // Add profanity with first letters
+    // Add profanity with obfuscation
     if (profanityWords.isNotEmpty) {
-      final letters = profanityWords.map((w) => w[0].toUpperCase()).join(', ');
-      parts.add('profanity ($letters)');
+      final obfuscated = profanityWords.map(_obfuscateWord).join(', ');
+      parts.add('profanity ($obfuscated)');
     }
 
-    // Add sexual content generically
+    // Add sexual content with obfuscation
     if (sexualWords.isNotEmpty) {
-      parts.add('graphic sexual description');
+      final obfuscated = sexualWords.map(_obfuscateWord).join(', ');
+      parts.add('sexual ($obfuscated)');
     }
 
-    // Add violence generically
+    // Add violence with obfuscation
     if (violenceWords.isNotEmpty) {
-      parts.add('graphic violence description');
+      final obfuscated = violenceWords.map(_obfuscateWord).join(', ');
+      parts.add('violence ($obfuscated)');
     }
 
     if (parts.isEmpty) {
