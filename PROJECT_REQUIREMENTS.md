@@ -20,67 +20,99 @@ BookWash is a Flutter desktop application that cleans EPUB books by using Ollama
    - Button/widget to allow user to browse and select an EPUB file
    - Display selected file path or name
 
-2. **Sensitivity Sliders** (Two independent sliders)
+2. **Sensitivity Sliders** (Three independent sliders, 1-5 scale based on movie ratings)
    
-   **Profanity Sensitivity Slider**: Range 1-4
+   **Language Sensitivity Slider**: Range 1-5
    
-   - **Level 1 - Strict**: Remove all profanity and insults
-     - **Removes:** jerk, fool, dope, stupid, idiot, dumb, foolish, and all stronger language
-     - **Keeps:** Nothing (nearly profanity-free)
-     - **Result:** Suitable for young readers/children
+   - **Level 1 - G Rated**: No profanity or crude language (Most censorship)
+     - **Removes:** ALL profanity, insults, and crude language
+     - **Examples removed:** jerk, fool, dope, stupid, idiot, dumb, crap, damn, hell, ass, bitch, f-words, all curse words
+     - **Keeps:** Clean language only
+     - **Result:** Suitable for all ages/young children
    
-   - **Level 2 - Moderate**: Remove most profanity, keep mild casual language
-     - **Removes:** Level 1 words, plus: crap, sucks, crappy, shitty, bastard, damn, hell
-     - **Keeps:** Mild expressions only
-     - **Note:** No f-words or any variations of the f-word at this level
+   - **Level 2 - PG Rated**: Mild language allowed (Heavy censorship)
+     - **Removes:** Strong profanity and crude language
+     - **Examples removed:** f-words, ass, asshole, bitch, bastard, more intense insults
+     - **Keeps:** Very mild expressions (darn, gosh, heck, jeez)
+     - **Result:** Family-friendly content
    
-   - **Level 3 - Permissive**: Remove strong profanity, keep mild curses
-     - **Removes:** Level 1-2 words, plus: ass, asshole, bitch, motherfucking, son of a bitch
-     - **Keeps:** damn, hell, crap, sucks, bastard (mild curse words)
-     - **Note:** No f-words or any variations of the f-word at this level
+   - **Level 3 - PG-13 Rated**: Some strong language (Light censorship)
+     - **Removes:** F-words and extreme profanity
+     - **Examples removed:** fuck, fucking, fucked, motherfucker, c-words, extreme slurs
+     - **Keeps:** Strong language like ass, asshole, bitch, damn, hell, crap, bastard
+     - **Result:** Teenage-appropriate content
    
-   - **Level 4 - Minimal**: Remove only the most extreme offensive language
-     - **Removes:** ALL f-word variations (fuck, fucking, fucked, motherfucker, etc.), c-words, extreme slurs, and other extreme profanity
-     - **Keeps:** ass, asshole, bitch, damn, hell, crap, sucks, bastard, motherfucking, son of a bitch
-     - **Note:** Any word containing the f-word in any form belongs ONLY at Level 4
+   - **Level 4 - R Rated**: Strong language allowed (Censorship of F-word only)
+     - **Removes:** Only f-word variations (fuck, fucking, fucked, motherfucker, etc.)
+     - **Keeps:** All other profanity including ass, asshole, bitch, damn, hell, crap, bastard, son of a bitch
+     - **Result:** Adult content with extreme profanity removed
+   
+   - **Level 5 - Unrated**: Everything allowed (No censorship)
+     - **Removes:** Nothing
+     - **Keeps:** All language including f-words, c-words, all profanity
+     - **Result:** Original unmodified content
 
-   **Sexual Content Sensitivity Slider**: Range 1-4
-   - **Level 1 - Strict**: Remove all sexual/romantic content except essential plot
-     - Example: Removes all romantic scenes, affectionate descriptions, relationship development beyond plot necessity
-     - Result: Completely sanitized, suitable for young children; relationships mentioned factually only
+   **Sexual Content Sensitivity Slider**: Range 1-5
    
-   - **Level 2 - Moderate**: Remove suggestive and explicit content, keep light romance
-     - Example: Removes detailed romantic scenes, sensual descriptions, sexual implications
-     - Keeps: "they fell in love", brief mentions of relationships, hand-holding, basic affection
+   - **Level 1 - G Rated**: No sexual content allowed (Most censorship)
+     - **Removes:** ALL romantic and sexual content beyond basic plot necessity
+     - **Examples removed:** Kissing, romantic scenes, affection, attraction, relationships beyond friendship
+     - **Keeps:** "They were married", "they were friends" (factual relationships only)
+     - **Result:** Suitable for young children
    
-   - **Level 3 - Suggestive**: Remove explicit sexual content, keep suggestive/romantic elements
-     - Example: Removes graphic descriptions, explicit language, detailed sexual acts
-     - Keeps: "passionate moment", romantic chemistry, innuendo, kissing
+   - **Level 2 - PG Rated**: Light romance only (Heavy censorship)
+     - **Removes:** Suggestive content, sexual implications, detailed romantic scenes
+     - **Examples removed:** Passionate kissing, sensual descriptions, sexual tension, innuendo
+     - **Keeps:** "They fell in love", hand-holding, basic affection, chaste kissing
+     - **Result:** Family-friendly romance
    
-   - **Level 4 - Graphic Only**: Remove only the most explicit sexual descriptions
-     - Example: Removes graphic sex scenes, explicit anatomical details, extreme descriptions
-     - Keeps: "They made love", intimate moments, sensual descriptions, most suggestive content
+   - **Level 3 - PG-13 Rated**: Romantic scenes allowed (Light censorship)
+     - **Removes:** Explicit sexual content and graphic descriptions
+     - **Examples removed:** Sex scenes, explicit anatomical details, graphic sexual acts
+     - **Keeps:** Passionate kissing, romantic chemistry, innuendo, "they spent the night together"
+     - **Result:** Teenage-appropriate romantic content
+   
+   - **Level 4 - R Rated**: Suggestive content allowed (Censorship of X-rated content only)
+     - **Removes:** Only extremely graphic sexual descriptions and pornographic content
+     - **Examples removed:** Explicit anatomical descriptions, graphic sex acts with extreme detail
+     - **Keeps:** "They made love", intimate scenes, sensual descriptions, most sexual content
+     - **Result:** Adult romantic/sexual content with extreme pornography removed
+   
+   - **Level 5 - Unrated**: Everything allowed (No censorship)
+     - **Removes:** Nothing
+     - **Keeps:** All sexual and romantic content including explicit scenes
+     - **Result:** Original unmodified content
 
-   **Violence Sensitivity Slider**: Range 1-4
-   - **Level 1 - Strict**: Remove all depictions of violence except plot-essential references
-     - Example: Removes physical fights, weapons usage, injury descriptions, threats, conflict scenes
-     - Removes: "He punched him in the face", "stabbed with a knife", "blood dripping", "she threatened to kill him"
-     - Keeps: "There was a conflict", "they argued", "the war happened" (abstract/historical)
+   **Violence Sensitivity Slider**: Range 1-5
    
-   - **Level 2 - Moderate**: Remove graphic violence, keep mild conflict and emotional harm
-     - Example: Removes detailed fight scenes, serious injuries, graphic weapons, explicit threats
-     - Removes: "His fist connected, breaking several ribs", "blood poured from the wound", "the gun fired point-blank"
-     - Keeps: "They fought", "he was hurt", "there was tension", "mild argument", "accidental bump"
+   - **Level 1 - G Rated**: No violence (Most censorship)
+     - **Removes:** ALL violence, physical conflict, weapons, injuries, and threats
+     - **Examples removed:** Fighting, punching, weapons, blood, injuries, death scenes, threats
+     - **Keeps:** "There was a conflict", "they disagreed" (abstract references only)
+     - **Result:** Suitable for young children
    
-   - **Level 3 - Suggestive**: Remove severe violence, keep minor physical conflict and self-defense
-     - Example: Removes brutal combat, serious injuries, torture, extreme weapons, lethal threats
-     - Removes: "tortured for hours", "dismembered", "shot execution-style", "graphic mutilation"
-     - Keeps: "they scuffled", "a black eye formed", "self-defense punch", "serious injury" (without graphic detail)
+   - **Level 2 - PG Rated**: Mild conflict only (Heavy censorship)
+     - **Removes:** Graphic violence, detailed injuries, weapons usage, serious threats
+     - **Examples removed:** Blood, detailed fights, stabbings, shootings, severe injuries
+     - **Keeps:** "They fought", "he was hurt", mild arguments, tension, accidental bumps
+     - **Result:** Family-friendly conflict
    
-   - **Level 4 - Minimal**: Remove only extreme violence and gore
-     - Example: Removes only the most graphic/extreme descriptions of violence, gore, and brutality
-     - Removes: "guts spilled across the floor", "flayed skin", "bones crushed to powder", "extreme torture"
-     - Keeps: "they fought brutally", "he was badly beaten", "serious wounds", "combat scenes"
+   - **Level 3 - PG-13 Rated**: Action/combat allowed (Light censorship)
+     - **Removes:** Extreme violence, torture, graphic injuries, brutal combat
+     - **Examples removed:** Torture scenes, dismemberment, graphic mutilation, execution-style deaths
+     - **Keeps:** Fight scenes, combat, "a black eye formed", self-defense, action sequences
+     - **Result:** Teenage-appropriate action content
+   
+   - **Level 4 - R Rated**: Intense violence allowed (Censorship of intense gore only)
+     - **Removes:** Only extreme gore and the most graphic descriptions
+     - **Examples removed:** "Guts spilled across the floor", "flayed skin", extreme torture with graphic detail
+     - **Keeps:** Brutal fights, serious injuries, "he was badly beaten", combat with blood, violent deaths
+     - **Result:** Adult violence with extreme gore removed
+   
+   - **Level 5 - Unrated**: Everything allowed (No censorship)
+     - **Removes:** Nothing
+     - **Keeps:** All violence including extreme gore and graphic descriptions
+     - **Result:** Original unmodified content
 
 3. **Action Button**
    - "Go" / "Clean Book" button to start the cleaning process

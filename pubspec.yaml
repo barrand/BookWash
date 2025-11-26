@@ -35,12 +35,16 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   file_picker: ^5.4.0
+  shared_preferences: ^2.2.2
 
   # EPUB parsing and file handling
   archive: ^3.6.1
   xml: ^6.5.0
   path: ^1.9.0
   html: ^0.15.4
+
+  # HTTP client for Ollama API
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:

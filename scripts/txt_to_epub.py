@@ -79,22 +79,26 @@ class StoryParser:
     
     def get_chapters_ordered(self):
         """Return chapters in proper reading order"""
-        order = [
-            '0_intro',
-            '1_profanity_level1', '2_profanity_level2', '3_profanity_level3', '4_profanity_level4',
-            '6_sexual_level1', '7_sexual_level2', '8_sexual_level3', '9_sexual_level4',
-            '10_violence_level1', '11_violence_level2', '12_violence_level3', '13_violence_level4',
-            '14_conclusion'
-        ]
+        # Sort chapters by ID
+        # Handle both numeric IDs and special IDs like "0_intro", "31", "999", etc.
+        def sort_key(chapter):
+            ch_id = chapter['id']
+            # Try to extract numeric part
+            if '_' in ch_id:
+                # Handle IDs like "0_intro", "1_profanity_level1"
+                parts = ch_id.split('_')
+                try:
+                    return (int(parts[0]), ch_id)
+                except ValueError:
+                    return (999999, ch_id)
+            else:
+                # Handle numeric IDs like "1", "51", "999"
+                try:
+                    return (int(ch_id), ch_id)
+                except ValueError:
+                    return (999999, ch_id)
         
-        chapters_dict = {ch['id']: ch for ch in self.chapters}
-        result = []
-        
-        for ch_id in order:
-            if ch_id in chapters_dict:
-                result.append(chapters_dict[ch_id])
-        
-        return result
+        return sorted(self.chapters, key=sort_key)
 
 
 class EPUBBuilder:
