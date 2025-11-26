@@ -725,8 +725,22 @@ class _BookWashHomeState extends State<BookWashHome> {
           if (response.wasModified) {
             setState(() {
               modifiedParagraphs += chapterParagraphs.length;
+              final changesToLog = response.detectedChanges
+                  .take(3)
+                  .map((change) {
+                    final parts = change.split(' ');
+                    if (parts.isNotEmpty) {
+                      final word = parts[0];
+                      // Re-add the rest of the change description, e.g., "(removed/changed)"
+                      final rest = parts.skip(1).join(' ');
+                      return '${_obfuscateWord(word)} $rest';
+                    }
+                    return change;
+                  })
+                  .join(', ');
+
               final logEntry =
-                  '• Chapter ${chapterIdx + 1}: "${chapter.title}" - ${response.detectedChanges.take(3).join(", ")}';
+                  '• Chapter ${chapterIdx + 1}: "${chapter.title}" - $changesToLog';
               liveLogMessages.add(logEntry);
             });
           }

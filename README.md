@@ -6,8 +6,8 @@ If you've ever wished you could just *wash* the questionable parts out of a book
 
 BookWash is a desktop application built with Flutter that allows you to "wash" your EPUB books. It uses the power of Google's Gemini AI to analyze and filter content based on your preferred sensitivity levels.
 
-![BookWash Screenshot](https://i.imgur.com/YOUR_SCREENSHOT_URL.png) <!-- TODO: Add a screenshot of the app -->
-
+![BookWash Setup Screen](https://imgur.com/8P2JXcH) 
+![BookWash In Action](https://imgur.com/DnLEmBJ)
 ## Features
 
 *   **Process EPUB Files**: Select any EPUB file from your local drive.
@@ -35,13 +35,15 @@ BookWash reads an EPUB file, breaks it down into its constituent chapters, and t
 
 ### Prerequisites
 
-*   [Flutter SDK](https://docs.flutter.dev/get-started/install)
+*   [Flutter SDK](https://docs.flutter.dev/get-started/install) installed on your system.
 *   An editor like [VS Code](https://code.visualstudio.com/) or [Android Studio](https://developer.android.com/studio).
 *   A **Google Gemini API Key**.
+*   **For Windows Users**: You must have [Visual Studio](https://visualstudio.microsoft.com/downloads/) installed with the **"Desktop development with C++"** workload. This is required for building Flutter apps on Windows.
 
 ### Installation & Running
 
 1.  **Clone the repository:**
+    *   Open your preferred command-line tool (like PowerShell or Command Prompt on Windows, or Terminal on macOS).
     ```bash
     git clone https://github.com/barrand/BookWash.git
     cd BookWash
@@ -57,11 +59,23 @@ BookWash reads an EPUB file, breaks it down into its constituent chapters, and t
 
 3.  **Run the App:**
     *   When you first launch the BookWash application, it will prompt you to enter your Gemini API key. Paste the key you just copied. The app will save it securely for future sessions.
-    *   Run the app from your terminal:
+    *   Run the app from your terminal using the command for your operating system:
+
+    **On Windows:**
+    ```bash
+    flutter run -d windows
+    ```
+
+    **On macOS:**
     ```bash
     flutter run -d macos
     ```
-    (You can also run on `windows` or `linux` by changing the device flag).
+
+    **On Linux:**
+    ```bash
+    flutter run -d linux
+    ```
+
 
 ## Disclaimer & Limitations of AI Content Moderation
 
