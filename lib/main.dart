@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/epub_parser.dart';
+import 'services/epub_writer.dart';
 import 'services/ollama_service.dart';
 import 'services/gemini_service.dart';
+import 'models/chunk_change.dart';
+import 'widgets/change_review_dialog.dart';
 
 void main() {
   runApp(const BookWashApp());
@@ -77,7 +80,15 @@ class _BookWashHomeState extends State<BookWashHome> {
 
   // Cleaned book data
   List<String> cleanedParagraphs = [];
-  Map<int, int> paragraphToChapter = {}; // paragraph index -> chapter index
+  Map<int, int> paragraphToChapter =
+      {}; // original paragraph index -> chapter index
+  Map<int, int> cleanedParagraphToChapter =
+      {}; // cleaned paragraph index -> chapter index
+
+  // Change review system
+  List<ChunkChange> pendingChanges = [];
+  int currentReviewIndex = 0;
+  bool isReviewingChanges = false;
 
   @override
   void initState() {
@@ -345,9 +356,9 @@ class _BookWashHomeState extends State<BookWashHome> {
       // Let user choose save location
       final outputPath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save Cleaned Book',
-        fileName: '${parsedEpub!.metadata.title}_cleaned.txt',
+        fileName: '${parsedEpub!.metadata.title}_cleaned.epub',
         type: FileType.custom,
-        allowedExtensions: ['txt'],
+        allowedExtensions: ['epub'],
       );
 
       if (outputPath == null) {
@@ -355,40 +366,15 @@ class _BookWashHomeState extends State<BookWashHome> {
         return;
       }
 
-      // Build text output
-      final buffer = StringBuffer();
-      buffer.writeln('Title: ${parsedEpub!.metadata.title}');
-      buffer.writeln('Author: ${parsedEpub!.metadata.author}');
-      buffer.writeln('');
-      buffer.writeln('=' * 80);
-      buffer.writeln('');
-
-      // Group paragraphs by chapter
-      int currentChapter = -1;
-      int paragraphIdx = 0;
-
-      for (int i = 0; i < cleanedParagraphs.length; i++) {
-        final chapterIdx = paragraphToChapter[paragraphIdx] ?? 0;
-        paragraphIdx++;
-
-        // Add chapter header when entering new chapter
-        if (chapterIdx != currentChapter) {
-          currentChapter = chapterIdx;
-          if (i > 0) buffer.writeln(''); // Spacing between chapters
-          buffer.writeln(
-            'CHAPTER ${chapterIdx + 1}: ${parsedEpub!.chapters[chapterIdx].title}',
-          );
-          buffer.writeln('-' * 80);
-          buffer.writeln('');
-        }
-
-        buffer.writeln(cleanedParagraphs[i]);
-        buffer.writeln('');
-      }
-
-      // Write to file
-      final file = File(outputPath);
-      await file.writeAsString(buffer.toString());
+      // Write EPUB file
+      final epubWriter = EpubWriter();
+      await epubWriter.writeEpub(
+        outputPath: outputPath,
+        originalEpub: parsedEpub!,
+        cleanedParagraphs: cleanedParagraphs,
+        paragraphToChapter:
+            cleanedParagraphToChapter, // Use the cleaned mapping
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -453,6 +439,9 @@ class _BookWashHomeState extends State<BookWashHome> {
       liveLogMessages = [];
       cleanedParagraphs = [];
       paragraphToChapter = {};
+      cleanedParagraphToChapter = {};
+      pendingChanges = [];
+      currentReviewIndex = 0;
     });
 
     try {
@@ -490,6 +479,26 @@ class _BookWashHomeState extends State<BookWashHome> {
         await _processParagraphByParagraph(allParagraphs);
       }
       print('Finished processing - Cancelled: $isCancelling');
+
+      // If there are pending changes, show review dialog
+      if (pendingChanges.isNotEmpty && !isCancelling && mounted) {
+        setState(() {
+          isProcessing = false;
+          isReviewingChanges = true;
+        });
+
+        // Show review dialog
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => ChangeReviewDialog(
+            changes: pendingChanges,
+            onComplete: _applyApprovedChanges,
+          ),
+        );
+
+        return;
+      }
 
       // Cleaned paragraphs are already stored in the cleanedParagraphs list
       setState(() {
@@ -544,48 +553,34 @@ class _BookWashHomeState extends State<BookWashHome> {
     }
   }
 
-  // Process book in large chunks (for Gemini)
+  // Process book in larger chunks for API (reduce API calls), then split for review
   Future<void> _processInLargeChunks(List<String> allParagraphs) async {
-    const targetWordsPerChunk = 5000; // ~5000 words per chunk
-    final chunks = <List<int>>[]; // List of paragraph index ranges
+    const apiChunkSize =
+        50; // Send 50 paragraphs per API call (reduces API calls by 10x)
 
-    int currentChunkStart = 0;
-    int currentWordCount = 0;
+    final apiChunks = <List<int>>[]; // API chunks - larger
 
-    // Create chunks based on word count
-    for (int i = 0; i < allParagraphs.length; i++) {
-      final paragraph = allParagraphs[i];
-      final wordCount = paragraph.split(RegExp(r'\s+')).length;
-      currentWordCount += wordCount;
-
-      // Start new chunk if we exceed target
-      if (currentWordCount >= targetWordsPerChunk && i > currentChunkStart) {
-        chunks.add([currentChunkStart, i]);
-        currentChunkStart = i;
-        currentWordCount = wordCount;
-      }
-    }
-
-    // Add final chunk
-    if (currentChunkStart < allParagraphs.length) {
-      chunks.add([currentChunkStart, allParagraphs.length]);
+    // Create larger chunks for API calls
+    for (int i = 0; i < allParagraphs.length; i += apiChunkSize) {
+      final end = (i + apiChunkSize).clamp(0, allParagraphs.length);
+      apiChunks.add([i, end]);
     }
 
     print(
-      'Processing ${chunks.length} chunks (${allParagraphs.length} total paragraphs)',
+      'Processing ${apiChunks.length} API chunks (${allParagraphs.length} total paragraphs, $apiChunkSize paragraphs per API call)',
     );
 
-    for (int chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+    for (int apiChunkIdx = 0; apiChunkIdx < apiChunks.length; apiChunkIdx++) {
       if (isCancelling) break;
 
-      final start = chunks[chunkIdx][0];
-      final end = chunks[chunkIdx][1];
+      final apiStart = apiChunks[apiChunkIdx][0];
+      final apiEnd = apiChunks[apiChunkIdx][1];
 
-      // Combine paragraphs into one large chunk
-      final chunkText = allParagraphs.sublist(start, end).join('\n\n');
+      // Combine paragraphs into one large chunk for API
+      final apiChunkText = allParagraphs.sublist(apiStart, apiEnd).join('\n\n');
 
       print(
-        'Processing chunk ${chunkIdx + 1}/${chunks.length} (paragraphs $start-$end)...',
+        'Processing API chunk ${apiChunkIdx + 1}/${apiChunks.length} (paragraphs $apiStart-$apiEnd)...',
       );
 
       try {
@@ -594,58 +589,86 @@ class _BookWashHomeState extends State<BookWashHome> {
         }
 
         final response = await geminiService!.filterParagraph(
-          paragraph: chunkText,
+          paragraph: apiChunkText,
           profanityLevel: profanityLevel,
           sexualContentLevel: sexualContentLevel,
           violenceLevel: violenceLevel,
         );
 
-        // Split the cleaned text back into paragraphs
+        // Check paragraph count consistency
         final cleanedChunkParagraphs = response.cleanedText
             .split('\n\n')
             .where((p) => p.trim().isNotEmpty)
             .toList();
+        final originalParagraphCount = apiEnd - apiStart;
 
-        final originalParagraphCount = end - start;
-        print(
-          'Chunk $chunkIdx: Original had $originalParagraphCount paragraphs, cleaned has ${cleanedChunkParagraphs.length} paragraphs',
-        );
-
-        // If paragraph counts don't match, there may be an issue
         if (cleanedChunkParagraphs.length != originalParagraphCount) {
+          final lossPercentage =
+              (1 - (cleanedChunkParagraphs.length / originalParagraphCount)) *
+              100;
           print(
-            'WARNING: Paragraph count mismatch in chunk $chunkIdx! Original: $originalParagraphCount, Cleaned: ${cleanedChunkParagraphs.length}',
+            'WARNING: Paragraph count mismatch in API chunk $apiChunkIdx! Original: $originalParagraphCount, Cleaned: ${cleanedChunkParagraphs.length} (${lossPercentage.toStringAsFixed(1)}% change)',
           );
-          print('Original text length: ${chunkText.length} chars');
-          print('Cleaned text length: ${response.cleanedText.length} chars');
         }
 
-        // Add cleaned paragraphs
-        for (int i = 0; i < cleanedChunkParagraphs.length; i++) {
-          cleanedParagraphs.add(cleanedChunkParagraphs[i]);
-        }
-
-        // Track modifications
+        // If modified, break the large API chunk into smaller review chunks
         if (response.wasModified) {
+          // The challenge: we sent 50 paragraphs to Gemini, got back modified text
+          // Now we need to split it into review chunks without losing alignment
+
+          // For now, show the entire API chunk as one review
+          // This keeps original and cleaned text properly aligned
+          final chunkChange = ChunkChange(
+            chunkIndex: pendingChanges.length,
+            originalText: apiChunkText,
+            proposedText: response.cleanedText,
+            startParagraphIdx: apiStart,
+            endParagraphIdx: apiEnd,
+            detectedChanges: response.detectedChanges,
+          );
+
+          pendingChanges.add(chunkChange);
+
+          final percentThrough = ((apiEnd / allParagraphs.length) * 100)
+              .toStringAsFixed(1);
           setState(() {
             modifiedParagraphs += originalParagraphCount;
-            liveLogMessages.add(
-              'Chunk ${chunkIdx + 1}: Modified paragraphs $start-$end${response.removedWords.isNotEmpty ? " - Removed: ${response.removedWords.map(_obfuscateWord).join(", ")}" : ""}',
-            );
+
+            // Create detailed log entry
+            final logEntry =
+                '• ${percentThrough}% - Detected changes in API chunk ${apiChunkIdx + 1} (paragraphs $apiStart-$apiEnd): ${response.detectedChanges.take(3).join(", ")}';
+            liveLogMessages.add(logEntry);
           });
+        } else {
+          // No modifications - add original content directly
+          for (int i = apiStart; i < apiEnd; i++) {
+            final originalChapterIdx = paragraphToChapter[i]!;
+            cleanedParagraphToChapter[cleanedParagraphs.length] =
+                originalChapterIdx;
+            cleanedParagraphs.add(allParagraphs[i]);
+          }
         }
       } catch (e) {
-        print('Error processing chunk $chunkIdx: $e');
-        // Keep original paragraphs if filtering fails
-        for (int i = start; i < end; i++) {
+        print('Error processing API chunk $apiChunkIdx: $e');
+        // Keep original paragraphs if filtering fails - add directly to cleaned list
+        for (int i = apiStart; i < apiEnd; i++) {
+          final originalChapterIdx = paragraphToChapter[i]!;
+          cleanedParagraphToChapter[cleanedParagraphs.length] =
+              originalChapterIdx;
           cleanedParagraphs.add(allParagraphs[i]);
         }
+
+        setState(() {
+          liveLogMessages.add(
+            '⚠️ Error in API chunk ${apiChunkIdx + 1}: Using original content',
+          );
+        });
       }
 
       // Update progress
       setState(() {
-        processedParagraphs = end;
-        progress = end / allParagraphs.length;
+        processedParagraphs = apiEnd;
+        progress = apiEnd / allParagraphs.length;
       });
     }
   }
@@ -660,9 +683,11 @@ class _BookWashHomeState extends State<BookWashHome> {
       }
 
       final paragraph = allParagraphs[i];
+      final chapterIdx = paragraphToChapter[i]!;
 
       // Skip very short paragraphs (likely formatting elements)
       if (paragraph.trim().length < 10) {
+        cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
         cleanedParagraphs.add(paragraph);
         setState(() {
           processedParagraphs++;
@@ -682,6 +707,7 @@ class _BookWashHomeState extends State<BookWashHome> {
           violenceLevel: violenceLevel,
         );
 
+        cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
         cleanedParagraphs.add(response.cleanedText);
 
         // Track if content was changed
@@ -716,6 +742,7 @@ class _BookWashHomeState extends State<BookWashHome> {
       } catch (e) {
         print('Error processing paragraph $i: $e');
         // Keep original paragraph if filtering fails
+        cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
         cleanedParagraphs.add(paragraph);
       }
 
@@ -724,6 +751,87 @@ class _BookWashHomeState extends State<BookWashHome> {
         processedParagraphs++;
         progress = (i + 1) / allParagraphs.length;
       });
+    }
+  }
+
+  /// Apply the changes that user approved during review
+  Future<void> _applyApprovedChanges(List<ChunkChange> approvedChanges) async {
+    setState(() {
+      isReviewingChanges = false;
+      liveLogMessages.add(
+        '📝 Applying ${approvedChanges.length} approved changes...',
+      );
+    });
+
+    for (final change in approvedChanges) {
+      // Split the proposed text back into paragraphs
+      final cleanedChunkParagraphs = change.proposedText
+          .split('\n\n')
+          .where((p) => p.trim().isNotEmpty)
+          .toList();
+
+      final start = change.startParagraphIdx;
+      final end = change.endParagraphIdx;
+      final originalParagraphCount = end - start;
+
+      // Add cleaned paragraphs and map to chapters
+      for (int i = 0; i < cleanedChunkParagraphs.length; i++) {
+        // Map the new cleaned paragraph to its original chapter
+        // We assume paragraphs stay in order, so map proportionally
+        final originalIdx =
+            start +
+            ((i * originalParagraphCount) ~/ cleanedChunkParagraphs.length);
+        final originalChapterIdx = paragraphToChapter[originalIdx]!;
+
+        // Add to cleaned paragraphs and map to chapter
+        cleanedParagraphToChapter[cleanedParagraphs.length] =
+            originalChapterIdx;
+        cleanedParagraphs.add(cleanedChunkParagraphs[i]);
+      }
+    }
+
+    // For rejected changes, add original content
+    final allParagraphs = <String>[];
+    for (
+      int chapterIdx = 0;
+      chapterIdx < parsedEpub!.chapters.length;
+      chapterIdx++
+    ) {
+      final chapter = parsedEpub!.chapters[chapterIdx];
+      allParagraphs.addAll(chapter.paragraphs);
+    }
+
+    for (final change in pendingChanges) {
+      if (!change.isApproved) {
+        // Add original paragraphs for rejected changes
+        for (
+          int i = change.startParagraphIdx;
+          i < change.endParagraphIdx;
+          i++
+        ) {
+          final originalChapterIdx = paragraphToChapter[i]!;
+          cleanedParagraphToChapter[cleanedParagraphs.length] =
+              originalChapterIdx;
+          cleanedParagraphs.add(allParagraphs[i]);
+        }
+      }
+    }
+
+    setState(() {
+      isProcessing = false;
+      progress = 1.0;
+      liveLogMessages.add(
+        '✅ Book processed: ${cleanedParagraphs.length} paragraphs, ${approvedChanges.length} changes applied',
+      );
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Changes applied! Ready to save.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
     }
   }
 
