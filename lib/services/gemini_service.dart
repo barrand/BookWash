@@ -589,7 +589,24 @@ class GeminiService {
             '- ANY dialogue requesting touch: "touch me", "hold me", "I want you"',
           );
           buffer.writeln(
+            '- ANY innuendos or suggestive language (double meanings, winking, suggestive smiles)',
+          );
+          buffer.writeln(
             '- If entire paragraph is romantic -> REMOVE or replace with "their relationship continued"',
+          );
+          buffer.writeln();
+          buffer.writeln(
+            'CRITICAL: This is a CHILDREN\'S rating. Err on the side of removal.',
+          );
+          buffer.writeln(
+            'If you\'re unsure whether something is appropriate -> REMOVE IT',
+          );
+          buffer.writeln();
+          buffer.writeln(
+            'CRITICAL BIAS: For G-rated content, you MUST have a strong bias for removing any and all sexual or romantic content, even if it spoils the narrative. Your primary goal is to protect, not to preserve the story.',
+          );
+          buffer.writeln(
+            'If a setting is inherently not G-rated (e.g., a bar, a nightclub, a strip club), you should remove the entire scene or replace it with a generic, G-rated equivalent like "they met at a cafe" or "they went to a restaurant".',
           );
           break;
         case 2: // PG Rated
@@ -611,12 +628,35 @@ class GeminiService {
           buffer.writeln(
             '- Passionate kissing with detail, sensual descriptions',
           );
-          buffer.writeln('- Sexual tension, innuendo, suggestive language');
+          buffer.writeln(
+            '- Sexual tension, innuendo, suggestive language, double meanings',
+          );
           buffer.writeln(
             '- Body descriptions (curves, attractive body, physique)',
           );
           buffer.writeln('- Intimate touching, caressing, bedroom scenes');
           buffer.writeln('- Desire, arousal, sexual thoughts or fantasies');
+          buffer.writeln(
+            '- Suggestive clothing descriptions, provocative appearance',
+          );
+          buffer.writeln('- ANY dialogue with sexual subtext or flirtation');
+          buffer.writeln();
+          buffer.writeln(
+            'CRITICAL: This is FAMILY VIEWING rating. Err on the side of removal.',
+          );
+          buffer.writeln(
+            'If you\'re unsure whether something is too suggestive -> REMOVE IT',
+          );
+          buffer.writeln(
+            'Think: "Would I let my 10-year-old child read this?" If NO -> REMOVE',
+          );
+          buffer.writeln();
+          buffer.writeln(
+            'CRITICAL BIAS: For PG-rated content, you must have a bias for removing suggestive content, even if it slightly impacts the narrative. If a scene is borderline PG-13, you should remove the suggestive elements to make it clearly PG.',
+          );
+          buffer.writeln(
+            'If a setting is inherently sexualized (e.g., a strip club), you must remove the scene entirely or heavily sanitize it to focus only on non-sexual plot points. Do not describe the setting.',
+          );
           break;
         case 3: // PG-13 Rated
           buffer.writeln('⚠️ TARGET: PG-13 RATING (Suitable for teens 13+) ⚠️');
@@ -753,5 +793,142 @@ class GeminiService {
     );
 
     return buffer.toString();
+  }
+}
+
+/// Content rating (G, PG, PG-13, R, X)
+enum ContentRating { G, PG, PG13, R, X }
+
+/// Ratings for different content types
+class ContentRatings {
+  final ContentRating language;
+  final ContentRating sexualContent;
+  final ContentRating violence;
+
+  ContentRatings({
+    required this.language,
+    required this.sexualContent,
+    required this.violence,
+  });
+
+  /// Parse rating from string (e.g., "PG" -> ContentRating.PG)
+  static ContentRating parseRating(String rating) {
+    switch (rating.toUpperCase()) {
+      case 'G':
+        return ContentRating.G;
+      case 'PG':
+        return ContentRating.PG;
+      case 'PG-13':
+      case 'PG13':
+        return ContentRating.PG13;
+      case 'R':
+        return ContentRating.R;
+      case 'X':
+        return ContentRating.X;
+      default:
+        return ContentRating.PG;
+    }
+  }
+
+  @override
+  String toString() {
+    return 'Language: ${language.name}, Sexual: ${sexualContent.name}, Violence: ${violence.name}';
+  }
+}
+
+/// Response from rating a chapter
+class ChapterRatingResponse {
+  final ContentRatings ratings;
+  final String summary;
+
+  ChapterRatingResponse({required this.ratings, required this.summary});
+}
+
+/// Extension to add rating method to GeminiService
+extension RatingExtension on GeminiService {
+  /// Rate a chapter for content and return ratings
+  Future<ChapterRatingResponse> rateChapter({required String text}) async {
+    final prompt =
+        '''Analyze the following text and rate it for content in three categories.
+For each category, respond with ONLY one of: G, PG, PG-13, R, or X
+
+Categories:
+1. LANGUAGE (profanity, cursing)
+   - G: No profanity
+   - PG: Mild words like "damn", "hell"
+   - PG-13: More frequent mild profanity
+   - R: Strong profanity (f-word, etc)
+   - X: Extreme profanity
+
+2. SEXUAL CONTENT (romantic, sexual, suggestive)
+   - G: No romantic/sexual content
+   - PG: Innocent kissing, hand-holding
+   - PG-13: Passionate kissing, emotional intimacy, suggestive scenes
+   - R: Explicit descriptions of sexual acts
+   - X: Graphic pornographic content
+
+3. VIOLENCE (fighting, gore, harm)
+   - G: No violence
+   - PG: Mild action, slapstick
+   - PG-13: Combat, injuries, some blood
+   - R: Graphic violence, gore
+   - X: Extreme graphic violence
+
+Respond in exactly this format (one rating per line):
+LANGUAGE: [G/PG/PG-13/R/X]
+SEXUAL: [G/PG/PG-13/R/X]
+VIOLENCE: [G/PG/PG-13/R/X]
+SUMMARY: [Brief 1-2 sentence summary of the most restrictive content]
+
+Text to analyze:''';
+
+    try {
+      final result = await filterText(text: text, prompt: prompt);
+
+      // Parse the response
+      final lines = result.split('\n');
+      ContentRating language = ContentRating.G;
+      ContentRating sexual = ContentRating.G;
+      ContentRating violence = ContentRating.G;
+      String summary = '';
+
+      for (final line in lines) {
+        if (line.startsWith('LANGUAGE:')) {
+          language = ContentRatings.parseRating(
+            line.replaceAll('LANGUAGE:', '').trim(),
+          );
+        } else if (line.startsWith('SEXUAL:')) {
+          sexual = ContentRatings.parseRating(
+            line.replaceAll('SEXUAL:', '').trim(),
+          );
+        } else if (line.startsWith('VIOLENCE:')) {
+          violence = ContentRatings.parseRating(
+            line.replaceAll('VIOLENCE:', '').trim(),
+          );
+        } else if (line.startsWith('SUMMARY:')) {
+          summary = line.replaceAll('SUMMARY:', '').trim();
+        }
+      }
+
+      return ChapterRatingResponse(
+        ratings: ContentRatings(
+          language: language,
+          sexualContent: sexual,
+          violence: violence,
+        ),
+        summary: summary,
+      );
+    } catch (e) {
+      print('Error rating chapter: $e');
+      // Default to PG if error
+      return ChapterRatingResponse(
+        ratings: ContentRatings(
+          language: ContentRating.PG,
+          sexualContent: ContentRating.PG,
+          violence: ContentRating.PG,
+        ),
+        summary: 'Error rating content',
+      );
+    }
   }
 }
