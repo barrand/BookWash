@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
@@ -96,7 +97,7 @@ class EpubParser {
     }
 
     // Parse OPF content
-    final opfContent = String.fromCharCodes(opfFile.content as List<int>);
+    final opfContent = _readContent(opfFile);
     final opfDocument = XmlDocument.parse(opfContent);
 
     // Build manifest map (id -> {href, media-type})
@@ -164,9 +165,7 @@ class EpubParser {
       orElse: () => throw Exception('META-INF/container.xml not found'),
     );
 
-    final containerContent = String.fromCharCodes(
-      containerFile.content as List<int>,
-    );
+    final containerContent = _readContent(containerFile);
     final containerDoc = XmlDocument.parse(containerContent);
 
     final rootfile = containerDoc.findAllElements('rootfile').first;
@@ -244,12 +243,10 @@ class EpubParser {
       if (chapterFile == null) continue;
 
       // Parse chapter HTML
-      final htmlContent = String.fromCharCodes(
-        chapterFile.content as List<int>,
-      );
+      final htmlContent = _readContent(chapterFile);
       final chapter = _parseChapterHtml(
         id: idref,
-        href: chapterPath,
+        href: href, // Use the relative href here
         htmlContent: htmlContent,
       );
 
@@ -313,9 +310,19 @@ class EpubParser {
     return EpubChapter(
       id: id,
       title: title,
-      href: href,
+      href: href, // This is now the relative path
       paragraphs: paragraphs,
-      rawHtml: htmlContent,
+      rawHtml: document.outerHtml, // Use the parsed and outer HTML
     );
+  }
+
+  /// Reads file content as a UTF-8 string, with error handling.
+  static String _readContent(ArchiveFile file) {
+    if (file.content is List<int>) {
+      // Always decode as UTF-8. The allowMalformed flag prevents errors
+      // on invalid byte sequences by replacing them with a placeholder.
+      return utf8.decode(file.content as List<int>, allowMalformed: true);
+    }
+    return file.content as String;
   }
 }

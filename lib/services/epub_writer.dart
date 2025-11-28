@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as path;
+import 'package:xml/xml.dart';
 import 'epub_parser.dart';
 
 /// Service for writing EPUB files
@@ -95,19 +96,57 @@ class EpubWriter {
       final chapter = originalEpub.chapters[i];
       final paragraphs = chapterParagraphs[i] ?? [];
 
-      final chapterHtml = _generateChapterHtml(chapter.title, paragraphs);
-      final file = File(path.join(tempDir.path, 'OEBPS', 'chapter_$i.html'));
-      await file.writeAsString(chapterHtml);
+      final chapterHtml = _generateChapterHtml(
+        chapter.title,
+        paragraphs,
+        chapter.rawHtml,
+      );
+
+      // Validate the generated XHTML
+      _validateXhtml(chapterHtml, chapter.href);
+
+      final file = File(path.join(tempDir.path, 'OEBPS', chapter.href));
+      await file.writeAsString(chapterHtml, flush: true);
     }
   }
 
-  String _generateChapterHtml(String title, List<String> paragraphs) {
-    final escapedTitle = _escapeXml(title);
-    final paragraphsHtml = paragraphs
-        .map((p) => '    <p>${_escapeXml(p)}</p>')
-        .join('\n');
+  String _generateChapterHtml(
+    String title,
+    List<String> paragraphs,
+    String originalHtml,
+  ) {
+    try {
+      // Convert HTML5-style self-closing tags to XHTML format
+      final xhtmlContent = _normalizeToXhtml(originalHtml);
 
-    return '''<?xml version='1.0' encoding='utf-8'?>
+      // Parse as XML (XHTML is XML-compliant)
+      final document = XmlDocument.parse(xhtmlContent);
+
+      // Find the body element
+      final bodyElement = document.findAllElements('body').firstOrNull;
+
+      if (bodyElement != null) {
+        // Remove all existing children from body
+        bodyElement.children.clear();
+
+        // Add cleaned paragraphs as new <p> elements
+        for (final paragraphText in paragraphs) {
+          final pElement = XmlElement(XmlName('p'));
+          pElement.children.add(XmlText(paragraphText));
+          bodyElement.children.add(pElement);
+        }
+
+        // Return the serialized XML with proper formatting
+        return document.toXmlString(pretty: false);
+      }
+
+      // If no body found, fall back to creating basic structure
+      final escapedTitle = _escapeXml(title);
+      final paragraphsHtml = paragraphs
+          .map((p) => '    <p>${_escapeXml(p)}</p>')
+          .join('\n');
+
+      return '''<?xml version='1.0' encoding='utf-8'?>
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <title>$escapedTitle</title>
@@ -117,6 +156,38 @@ class EpubWriter {
 $paragraphsHtml
   </body>
 </html>''';
+    } catch (e) {
+      // If XML parsing fails, fall back to the regex method
+      print('XML parsing failed, falling back to regex replacement. Error: $e');
+      final paragraphsHtml = paragraphs
+          .map((p) => '    <p>${_escapeXml(p)}</p>')
+          .join('\n');
+
+      final bodyRegex = RegExp(
+        r'<body[^>]*>([\s\S]*)</body>',
+        caseSensitive: false,
+        dotAll: true,
+      );
+
+      if (bodyRegex.hasMatch(originalHtml)) {
+        return originalHtml.replaceFirstMapped(bodyRegex, (match) {
+          return '<body>\n$paragraphsHtml\n</body>';
+        });
+      }
+
+      // Fallback if body tag is not found
+      final escapedTitle = _escapeXml(title);
+      return '''<?xml version='1.0' encoding='utf-8'?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>$escapedTitle</title>
+  </head>
+  <body>
+    <h1>$escapedTitle</h1>
+$paragraphsHtml
+  </body>
+</html>''';
+    }
   }
 
   Future<void> _createContentOpf(
@@ -127,8 +198,9 @@ $paragraphsHtml
     final spineItems = StringBuffer();
 
     for (int i = 0; i < originalEpub.chapters.length; i++) {
+      final chapter = originalEpub.chapters[i];
       manifestItems.writeln(
-        '    <item href="chapter_$i.html" id="chapter_$i" media-type="application/xhtml+xml"/>',
+        '    <item href="${chapter.href}" id="chapter_$i" media-type="application/xhtml+xml"/>',
       );
       spineItems.write('    <itemref idref="chapter_$i"/>\n');
     }
@@ -187,7 +259,7 @@ ${spineItems.toString().trimRight()}
       navPoints.writeln('      <navLabel>');
       navPoints.writeln('        <text>$escapedTitle</text>');
       navPoints.writeln('      </navLabel>');
-      navPoints.writeln('      <content src="chapter_$i.html"/>');
+      navPoints.writeln('      <content src="${chapter.href}"/>');
       navPoints.writeln('    </navPoint>');
     }
 
@@ -267,5 +339,64 @@ ${navPoints.toString().trimRight()}
         .replaceAll('\u201C', '&quot;') // Left double quote
         .replaceAll('\u2014', '&#8212;') // Em dash
         .replaceAll('\u2013', '&#8211;'); // En dash
+  }
+
+  /// Normalize HTML5-style self-closing tags to XHTML format
+  String _normalizeToXhtml(String html) {
+    // List of void elements that should be self-closing in XHTML
+    final voidElements = [
+      'area',
+      'base',
+      'br',
+      'col',
+      'embed',
+      'hr',
+      'img',
+      'input',
+      'link',
+      'meta',
+      'param',
+      'source',
+      'track',
+      'wbr',
+    ];
+
+    var normalized = html;
+
+    for (final tag in voidElements) {
+      // Match opening tags that are not self-closing: <tag ...> but not <tag ... />
+      final pattern = RegExp('<($tag)([^>]*?)(?<!/)>', caseSensitive: false);
+
+      normalized = normalized.replaceAllMapped(pattern, (match) {
+        final tagName = match.group(1);
+        final attributes = match.group(2);
+        return '<$tagName$attributes />';
+      });
+    }
+
+    return normalized;
+  }
+
+  /// Validate XHTML content by attempting to parse it as XML
+  void _validateXhtml(String xhtml, String filename) {
+    try {
+      XmlDocument.parse(xhtml);
+      print('✓ Validated: $filename');
+    } catch (e) {
+      print('⚠ Warning: XHTML validation failed for $filename');
+      print('  Error: $e');
+
+      // Try to extract more specific error information
+      if (e is XmlParserException) {
+        print('  Position: line ${e.line}, column ${e.column}');
+
+        // Show a snippet of the problematic area
+        final lines = xhtml.split('\n');
+        if (e.line > 0 && e.line <= lines.length) {
+          final problemLine = lines[e.line - 1];
+          print('  Line content: ${problemLine.trim()}');
+        }
+      }
+    }
   }
 }
