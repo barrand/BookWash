@@ -1,5 +1,5 @@
 import 'package:bookwash/models/change_detail.dart';
-import 'package:bookwash/models/categorized_changes.dart';
+// import 'package:bookwash/models/categorized_changes.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -750,6 +750,115 @@ class _BookWashHomeState extends State<BookWashHome> {
             processedParagraphs += chapterParagraphs.length;
             progress = processedParagraphs / totalParagraphs;
           });
+
+          // SECOND PASS: Re-rate cleaned chapter; if sexual/violence still above target, run stricter PG cleaning using alternate model
+          try {
+            final cleanedChapterText = cleanedChapterParagraphs.join('\n\n');
+            final postRatings = await geminiService!.rateChapter(
+              text: cleanedChapterText,
+              onRateLimit: (delay) {
+                setState(() {
+                  liveLogMessages.add(
+                    '⏸️ Rate limited. Waiting ${delay.inSeconds}s...',
+                  );
+                  _scrollToBottom();
+                });
+              },
+            );
+
+            final targetSex = sexualContentLevel;
+            final targetViol = violenceLevel;
+            int ratingToLevelLocal(ContentRating rating) {
+              switch (rating) {
+                case ContentRating.G:
+                  return 1;
+                case ContentRating.PG:
+                  return 2;
+                case ContentRating.PG13:
+                  return 3;
+                case ContentRating.R:
+                  return 4;
+                case ContentRating.X:
+                  return 5;
+              }
+            }
+
+            final sexTooHigh =
+                ratingToLevelLocal(postRatings.ratings.sexualContent) >
+                targetSex;
+            final violTooHigh =
+                ratingToLevelLocal(postRatings.ratings.violence) > targetViol;
+
+            if (sexTooHigh || violTooHigh) {
+              setState(() {
+                liveLogMessages.add(
+                  '🔁 Chapter ${chapterIdx + 1}: Second pass due to residual ${sexTooHigh ? 'sexual ' : ''}${violTooHigh ? 'violence' : ''} content',
+                );
+              });
+              _scrollToBottom();
+
+              // Use alternate Gemini model for second pass if provided via env GEMINI_SECOND_MODEL
+              final secondModel = const String.fromEnvironment(
+                'GEMINI_SECOND_MODEL',
+                defaultValue: 'gemini-2.5-pro',
+              );
+              final secondService = GeminiService(
+                apiKey: geminiApiKey,
+                model: secondModel,
+              );
+
+              final secondResp = await secondService.filterParagraph(
+                paragraph: cleanedChapterText,
+                profanityLevel: profanityLevel, // keep language target
+                sexualContentLevel: sexualContentLevel,
+                violenceLevel: violenceLevel,
+                chapterIndex: chapterIdx,
+                strictSexualPg: sexTooHigh && sexualContentLevel <= 2,
+                strictViolencePg: violTooHigh && violenceLevel <= 2,
+                onRateLimit: (delay) {
+                  setState(() {
+                    liveLogMessages.add(
+                      '⏸️ Second pass rate limit. Waiting ${delay.inSeconds}s...',
+                    );
+                    _scrollToBottom();
+                  });
+                },
+              );
+
+              final reCleanedParas = secondResp.cleanedText
+                  .split('\n\n')
+                  .where((p) => p.trim().isNotEmpty)
+                  .toList();
+
+              // Replace last chapter's paragraphs with second pass output
+              final startIndex =
+                  cleanedParagraphs.length - cleanedChapterParagraphs.length;
+              cleanedParagraphs.removeRange(
+                startIndex,
+                cleanedParagraphs.length,
+              );
+              for (final para in reCleanedParas) {
+                cleanedParagraphToChapter[cleanedParagraphs.length] =
+                    chapterIdx;
+                cleanedParagraphs.add(para);
+              }
+
+              // Log summary of second pass
+              setState(() {
+                liveLogMessages.add(
+                  '✅ Chapter ${chapterIdx + 1}: Second pass applied with model ${secondModel}',
+                );
+              });
+              _scrollToBottom();
+            }
+          } catch (e) {
+            setState(() {
+              liveLogMessages.add(
+                '⚠️ Second pass failed for Chapter ${chapterIdx + 1}: $e',
+              );
+            });
+            _scrollToBottom();
+          }
         } else {
           // Chapter is too large, split into smaller chunks
           print(
@@ -1001,13 +1110,7 @@ class _BookWashHomeState extends State<BookWashHome> {
               Icons.volume_off,
               Colors.orange,
             ),
-          if (sexualChanges.isNotEmpty)
-            _buildSummaryCategory(
-              'Sexual Content Changes',
-              sexualChanges,
-              Icons.favorite_border,
-              Colors.pink,
-            ),
+          if (sexualChanges.isNotEmpty) _buildSexualSummaryCard(sexualChanges),
           if (violenceChanges.isNotEmpty)
             _buildSummaryCategory(
               'Violence Changes',
@@ -1055,7 +1158,6 @@ class _BookWashHomeState extends State<BookWashHome> {
             ),
             const Divider(height: 16),
             ...groupedByWord.entries.map((entry) {
-              final word = entry.key;
               final wordChanges = entry.value;
               final obfuscated = wordChanges.first.obfuscatedWord;
               final count = wordChanges.length;
@@ -1089,6 +1191,62 @@ class _BookWashHomeState extends State<BookWashHome> {
                 ),
               );
             }).toList(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSexualSummaryCard(List<ChangeDetail> sexualChanges) {
+    final affectedChapters =
+        sexualChanges.map((c) => c.chapterIndex + 1).toSet().toList()..sort();
+    final totalTokens = sexualChanges.length;
+    final uniqueTokens =
+        sexualChanges.map((c) => c.obfuscatedWord).toSet().toList()..sort();
+    final sampleTokens = uniqueTokens.take(10).join(', ');
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.favorite_border, color: Colors.pink),
+                const SizedBox(width: 8),
+                Text(
+                  'Sexual Content Changes',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 16),
+            Text(
+              'Chapters affected (${affectedChapters.length}): ${affectedChapters.join(', ')}',
+              style: TextStyle(color: Colors.grey[300]),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Total sexual tokens removed/modified: $totalTokens',
+              style: TextStyle(color: Colors.grey[300]),
+            ),
+            if (sampleTokens.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Sample tokens: $sampleTokens${uniqueTokens.length > 10 ? ' …' : ''}',
+                style: TextStyle(color: Colors.grey[400], fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              'Note: Sexual content is filtered at chapter granularity; token counts approximate intensity, not precise paragraph attribution.',
+              style: TextStyle(color: Colors.grey[500], fontSize: 11),
+            ),
           ],
         ),
       ),

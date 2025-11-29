@@ -473,6 +473,8 @@ class GeminiService {
     required int violenceLevel,
     required int chapterIndex,
     void Function(Duration)? onRateLimit,
+    bool strictSexualPg = false,
+    bool strictViolencePg = false,
   }) async {
     // If all levels are 5 (Unrated), skip filtering entirely
     if (profanityLevel == 5 && sexualContentLevel == 5 && violenceLevel == 5) {
@@ -490,10 +492,17 @@ class GeminiService {
       );
     }
 
+    // Note which dimensions are unrated (5) so we can skip categorizing changes for them
+    final skipProfanityCategorization = profanityLevel == 5;
+    final skipSexualCategorization = sexualContentLevel == 5;
+    final skipViolenceCategorization = violenceLevel == 5;
+
     final prompt = _buildFilteringPrompt(
       profanityLevel: profanityLevel,
       sexualContentLevel: sexualContentLevel,
       violenceLevel: violenceLevel,
+      strictSexualPg: strictSexualPg,
+      strictViolencePg: strictViolencePg,
     );
 
     var cleanedText = await filterText(
@@ -543,6 +552,8 @@ class GeminiService {
     required int profanityLevel,
     required int sexualContentLevel,
     required int violenceLevel,
+    bool strictSexualPg = false,
+    bool strictViolencePg = false,
   }) {
     final buffer = StringBuffer();
 
@@ -655,6 +666,38 @@ class GeminiService {
       '- If the entire paragraph is sexual content, replace with a single simple sentence or remove entirely',
     );
     buffer.writeln();
+
+    // Stricter PG profile toggles
+    if (strictSexualPg && sexualContentLevel <= 2) {
+      buffer.writeln('STRICT PG SEXUAL RULES:');
+      buffer.writeln(
+        '- Remove any explicit anatomical terms (breast, nipple, thigh, hip, abdomen, groin, etc.) and explicit caress verbs (stroke, knead, squeeze) when used sexually.',
+      );
+      buffer.writeln(
+        '- Remove any description of clothing removal beyond a neutral mention ("they adjusted coats" acceptable).',
+      );
+      buffer.writeln(
+        '- No implied intercourse; convert to neutral time progression ("they spent time together").',
+      );
+      buffer.writeln(
+        '- Heated kissing is allowed only at PG-13. At PG, limit to mild affection (brief hug, friendly gesture).',
+      );
+      buffer.writeln();
+    }
+
+    if (strictViolencePg && violenceLevel <= 2) {
+      buffer.writeln('STRICT PG VIOLENCE RULES:');
+      buffer.writeln(
+        '- Remove blood mentions, weapon mentions (knife, gun, blade, pipe), and injury descriptions (fracture, gash, wound).',
+      );
+      buffer.writeln(
+        '- Keep only incidental physical contact such as bumps or harmless falls without injury detail.',
+      );
+      buffer.writeln(
+        '- Convert confrontations into verbal disputes or neutral resolution without physical harm.',
+      );
+      buffer.writeln();
+    }
 
     // Language filtering instructions (principle-based, minimal examples)
     if (profanityLevel < 5) {
@@ -1077,4 +1120,7 @@ extension RatingExtension on GeminiService {
       );
     }
   }
+
+  /// Classification-only endpoint returning just the structured ratings
+  // Removed: Use rateChapter() and access response.ratings instead.
 }
