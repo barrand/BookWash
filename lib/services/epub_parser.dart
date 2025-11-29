@@ -100,13 +100,14 @@ class EpubParser {
     final opfContent = _readContent(opfFile);
     final opfDocument = XmlDocument.parse(opfContent);
 
-    // Build manifest map (id -> {href, media-type})
-    final manifestItems = opfDocument
-        .findAllElements('manifest')
-        .first
-        .findElements('item');
+    // Build manifest map (namespace agnostic)
+    final manifestElement = _firstByLocalName(opfDocument, 'manifest');
+    if (manifestElement == null) {
+      throw Exception('OPF manifest element not found');
+    }
     final manifestMap = <String, Map<String, String>>{};
-    for (final item in manifestItems) {
+    for (final item in manifestElement.children.whereType<XmlElement>()) {
+      if (item.name.local != 'item') continue;
       final id = item.getAttribute('id');
       final href = item.getAttribute('href');
       final mediaType = item.getAttribute('media-type');
@@ -126,7 +127,6 @@ class EpubParser {
     final coverMeta = metaItems
         .where((m) => m.getAttribute('name') == 'cover')
         .firstOrNull;
-
     if (coverMeta != null) {
       final coverId = coverMeta.getAttribute('content');
       if (coverId != null && manifestMap.containsKey(coverId)) {
@@ -168,7 +168,10 @@ class EpubParser {
     final containerContent = _readContent(containerFile);
     final containerDoc = XmlDocument.parse(containerContent);
 
-    final rootfile = containerDoc.findAllElements('rootfile').first;
+    final rootfile = _firstByLocalName(containerDoc, 'rootfile');
+    if (rootfile == null) {
+      throw Exception('container.xml rootfile element not found');
+    }
     final opfPath = rootfile.getAttribute('full-path');
 
     if (opfPath == null) {
@@ -180,7 +183,10 @@ class EpubParser {
 
   /// Extract metadata from OPF document
   static EpubMetadata _extractMetadata(XmlDocument opfDocument) {
-    final metadataElement = opfDocument.findAllElements('metadata').first;
+    final metadataElement = _firstByLocalName(opfDocument, 'metadata');
+    if (metadataElement == null) {
+      throw Exception('OPF metadata element not found');
+    }
 
     String getMetadataValue(String tagName, {String defaultValue = ''}) {
       try {
@@ -219,7 +225,10 @@ class EpubParser {
     Map<String, ArchiveFile> fileMap,
     Map<String, Map<String, String>> manifestMap,
   ) async {
-    final spine = opfDocument.findAllElements('spine').first;
+    final spine = _firstByLocalName(opfDocument, 'spine');
+    if (spine == null) {
+      throw Exception('OPF spine element not found');
+    }
 
     // Get base path from OPF location
     final basePath = opfPath.contains('/')
@@ -228,7 +237,8 @@ class EpubParser {
 
     // Extract chapters in spine order
     final chapters = <EpubChapter>[];
-    for (final itemref in spine.findElements('itemref')) {
+    for (final itemref in spine.children.whereType<XmlElement>()) {
+      if (itemref.name.local != 'itemref') continue;
       final idref = itemref.getAttribute('idref');
       if (idref == null) continue;
 
@@ -324,5 +334,13 @@ class EpubParser {
       return utf8.decode(file.content as List<int>, allowMalformed: true);
     }
     return file.content as String;
+  }
+
+  /// Helper: find first element (namespace agnostic) by local name
+  static XmlElement? _firstByLocalName(XmlDocument doc, String local) {
+    for (final e in doc.descendants.whereType<XmlElement>()) {
+      if (e.name.local == local) return e;
+    }
+    return null;
   }
 }

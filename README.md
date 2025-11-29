@@ -25,6 +25,7 @@ Here is the cleaning screen when the app is doing it's magic.
     2.  **Filtering Pass**: If a chapter's rating is more explicit than your setting, the AI will perform a second pass to clean it, rephrasing or removing inappropriate content while trying to preserve the narrative. This saves time and reduces API calls.
 *   **Live Log**: See the app's progress in real-time as it processes your book chapter by chapter, including which chapters are being filtered and which are being skipped.
 *   **Generates New EPUB**: Outputs a new, cleaned EPUB file with `_cleaned` appended to the original filename. Your original file is never modified.
+*   **EPUB Clipper Utility**: Command-line script to extract a subset (first, middle, last) of chapters from a large EPUB for rapid testing.
 
 ## How It Works
 
@@ -79,6 +80,51 @@ BookWash reads an EPUB file, breaks it down into its constituent chapters, and t
     ```bash
     flutter run -d linux
     ```
+
+### EPUB Clipper (Testing Helper)
+
+To speed up iteration with large commercial EPUBs, use the clipper tool to produce a smaller test book that still preserves structure (metadata, cover, CSS, TOC) but only includes a few chapters.
+
+**Script Location:** `scripts/epub_clipper.py`
+
+**Basic Usage:**
+```bash
+python scripts/epub_clipper.py input.epub clipped.epub
+```
+
+This keeps 3 chapters (first, middle, last). The resulting EPUB title can optionally be suffixed with `(Clipped)`.
+
+**Options:**
+```bash
+python scripts/epub_clipper.py input.epub clipped.epub \
+    --count 4 \
+    --min-words 250 \
+    --append-title \
+    --verbose
+```
+
+**Flags Explained:**
+- `--count N`: Keep N evenly spaced chapters (default 3). If the book has fewer than N chapters, all are kept.
+- `--min-words N`: Only consider chapters with at least N words when picking first/middle/last (default 1000). Falls back to structural selection if none meet threshold.
+- `--append-title`: Adds ` (Clipped)` to the EPUB title in `content.opf`.
+- `--verbose`: Prints detailed logging (which chapters retained, removed paths, etc.).
+
+**What Is Preserved:**
+- Original metadata (except optional title suffix)
+- Cover image and all non-XHTML resources (CSS, images, fonts)
+- `toc.ncx` trimmed to just the kept chapters
+- `content.opf` spine and manifest updated
+
+**What Is Removed:**
+- Unselected XHTML chapter files (reading order items)
+- Corresponding `navPoint` entries in the NCX
+
+**Limitations:**
+- Only targets EPUB 2 (OPF + NCX). EPUB 3 landmarks/nav documents are not modified.
+- Internal links to removed chapters may break.
+- Keeps all non-chapter assets even if now unused (kept intentionally for safety).
+
+This tool helps quickly reproduce encoding, filtering, and TOC issues on a smaller artifact before processing the full book.
 
 
 ## Disclaimer & Limitations of AI Content Moderation
