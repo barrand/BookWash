@@ -215,6 +215,26 @@ class OllamaService {
     buffer.writeln(
       'You are a content filter for books. Your task is to clean the following text by removing or rephrasing inappropriate content based on the specified sensitivity levels.',
     );
+
+    // Note which dimensions are unrated
+    final unratedDimensions = <String>[];
+    if (profanityLevel == 5) unratedDimensions.add('language/profanity');
+    if (sexualContentLevel == 5) unratedDimensions.add('sexual content');
+    if (violenceLevel == 5) unratedDimensions.add('violence');
+
+    if (unratedDimensions.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('⚠️ UNRATED DIMENSIONS - DO NOT FILTER:');
+      buffer.writeln(
+        'The following content types are UNRATED and must be kept EXACTLY as written:',
+      );
+      for (final dim in unratedDimensions) {
+        buffer.writeln(
+          '  - $dim: Keep ALL content unchanged, no matter how strong',
+        );
+      }
+    }
+
     buffer.writeln();
     buffer.writeln('IMPORTANT RULES:');
     buffer.writeln('1. Preserve the narrative flow and story coherence');

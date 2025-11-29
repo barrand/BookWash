@@ -288,40 +288,52 @@ ${navPoints.toString().trimRight()}
   }
 
   Future<void> _createZip(Directory tempDir, String outputPath) async {
-    final encoder = ZipFileEncoder();
-    encoder.create(outputPath);
+    // EPUB spec requires mimetype to be:
+    // 1. First file in the archive
+    // 2. Stored uncompressed (compression level 0)
+    // 3. No extra fields
+    // Apple Books strictly enforces this.
 
-    // Add mimetype first (uncompressed as per EPUB spec)
+    final archive = Archive();
+
+    // Add mimetype first, uncompressed
     final mimetypeFile = File(path.join(tempDir.path, 'mimetype'));
-    encoder.addFile(mimetypeFile, 'mimetype');
+    final mimetypeBytes = await mimetypeFile.readAsBytes();
+    archive.addFile(
+      ArchiveFile('mimetype', mimetypeBytes.length, mimetypeBytes)
+        ..compress = false, // Critical: no compression
+    );
 
-    // Add all other files
-    await _addDirectoryToZip(
-      encoder,
+    // Add all other files with compression
+    await _addDirectoryToArchive(
+      archive,
       Directory(path.join(tempDir.path, 'META-INF')),
       'META-INF',
     );
-    await _addDirectoryToZip(
-      encoder,
+    await _addDirectoryToArchive(
+      archive,
       Directory(path.join(tempDir.path, 'OEBPS')),
       'OEBPS',
     );
 
-    encoder.close();
+    // Write the archive to file
+    final outputFile = File(outputPath);
+    await outputFile.writeAsBytes(ZipEncoder().encode(archive)!);
   }
 
-  Future<void> _addDirectoryToZip(
-    ZipFileEncoder encoder,
+  Future<void> _addDirectoryToArchive(
+    Archive archive,
     Directory dir,
     String basePath,
   ) async {
     await for (final entity in dir.list()) {
       if (entity is File) {
         final relativePath = path.join(basePath, path.basename(entity.path));
-        encoder.addFile(entity, relativePath);
+        final bytes = await entity.readAsBytes();
+        archive.addFile(ArchiveFile(relativePath, bytes.length, bytes));
       } else if (entity is Directory) {
         final relativePath = path.join(basePath, path.basename(entity.path));
-        await _addDirectoryToZip(encoder, entity, relativePath);
+        await _addDirectoryToArchive(archive, entity, relativePath);
       }
     }
   }

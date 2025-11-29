@@ -2,6 +2,7 @@ import 'package:bookwash/models/change_detail.dart';
 import 'package:bookwash/models/categorized_changes.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'rate_limiter.dart';
 
 /// Response from Gemini containing cleaned text and metadata
 class GeminiFilterResponse {
@@ -26,10 +27,20 @@ class GeminiFilterResponse {
     required String original,
     required String cleaned,
     required int chapterIndex,
+    bool skipProfanityCategorization = false,
+    bool skipSexualCategorization = false,
+    bool skipViolenceCategorization = false,
   }) {
     final wasModified = original.trim() != cleaned.trim();
     final categorizedChanges = wasModified
-        ? _categorizeChanges(original, cleaned, chapterIndex)
+        ? _categorizeChanges(
+            original,
+            cleaned,
+            chapterIndex,
+            skipProfanity: skipProfanityCategorization,
+            skipSexual: skipSexualCategorization,
+            skipViolence: skipViolenceCategorization,
+          )
         : CategorizedChanges(profanity: [], sexual: [], violence: []);
     final removedWords = wasModified
         ? _detectRemovedWords(original, cleaned)
@@ -51,8 +62,11 @@ class GeminiFilterResponse {
   static CategorizedChanges _categorizeChanges(
     String original,
     String cleaned,
-    int chapterIndex,
-  ) {
+    int chapterIndex, {
+    bool skipProfanity = false,
+    bool skipSexual = false,
+    bool skipViolence = false,
+  }) {
     final profanityChanges = <ChangeDetail>[];
     final sexualChanges = <ChangeDetail>[];
     final violenceChanges = <ChangeDetail>[];
@@ -106,7 +120,7 @@ class GeminiFilterResponse {
       if (cleanWord.isEmpty) continue;
 
       if (!cleanedSet.contains(cleanWord)) {
-        if (profanityKeywords.contains(cleanWord)) {
+        if (profanityKeywords.contains(cleanWord) && !skipProfanity) {
           profanityChanges.add(
             ChangeDetail(
               category: 'profanity',
@@ -115,7 +129,7 @@ class GeminiFilterResponse {
               originalWord: cleanWord,
             ),
           );
-        } else if (sexualKeywords.contains(cleanWord)) {
+        } else if (sexualKeywords.contains(cleanWord) && !skipSexual) {
           sexualChanges.add(
             ChangeDetail(
               category: 'sexual',
@@ -124,7 +138,7 @@ class GeminiFilterResponse {
               originalWord: cleanWord,
             ),
           );
-        } else if (violenceKeywords.contains(cleanWord)) {
+        } else if (violenceKeywords.contains(cleanWord) && !skipViolence) {
           violenceChanges.add(
             ChangeDetail(
               category: 'violence',
@@ -258,15 +272,52 @@ class GeminiFilterResponse {
 
 /// Service for communicating with Google Gemini API
 class GeminiService {
+  /*
+  Rating Principles (summary for maintainability):
+  - G: No profanity, insults, romantic/sexual content, or physical violence.
+  - PG: Very mild exclamations; innocent light romance; mild, non-graphic action.
+  - PG-13: Moderate profanity (excluding f-word), implied intimacy, sustained action with limited non-graphic blood.
+  - R: Strong profanity including f-word, explicit (non-pornographic) sexual references, intense violence without extreme gore detail.
+  - X: Graphic sexual detail or extreme gore/torture (always remove for any filtering level below 5/unrated).
+  Filtering relies on model's internal classification, not exhaustive word lists; replacements must be minimal and preserve narrative tone & paragraph count.
+  */
   final String apiKey;
   final String model;
   final Duration timeout;
+  final SimpleRateLimiter? rateLimiter;
 
   GeminiService({
     required this.apiKey,
-    this.model = 'gemini-2.0-flash-exp', // Free tier: 1500 RPD, 10 RPM
-    this.timeout = const Duration(seconds: 60),
-  });
+    String? model,
+    this.timeout = const Duration(seconds: 75), // slightly longer default
+    SimpleRateLimiter? rateLimiter,
+  }) : model =
+           model ??
+           const String.fromEnvironment(
+             'GEMINI_MODEL',
+             defaultValue: 'gemini-2.0-flash-exp',
+           ),
+       rateLimiter = rateLimiter ?? _buildDefaultLimiter();
+
+  static SimpleRateLimiter _buildDefaultLimiter() {
+    final rpmStr = const String.fromEnvironment(
+      'GEMINI_RPM_LIMIT',
+      defaultValue: '50',
+    );
+    final rpm = int.tryParse(rpmStr) ?? 50;
+    return SimpleRateLimiter(maxRequestsPerMinute: rpm);
+  }
+
+  /// Expose current filtering prompt (for harness/testing) without issuing a request.
+  String buildFilteringPrompt({
+    required int profanityLevel,
+    required int sexualContentLevel,
+    required int violenceLevel,
+  }) => _buildFilteringPrompt(
+    profanityLevel: profanityLevel,
+    sexualContentLevel: sexualContentLevel,
+    violenceLevel: violenceLevel,
+  );
 
   /// Check if API key is valid
   Future<bool> checkConnection() async {
@@ -351,6 +402,11 @@ class GeminiService {
         ],
       };
 
+      // Rate limiter slot
+      if (rateLimiter != null) {
+        await rateLimiter!.acquire();
+      }
+
       final response = await http
           .post(
             Uri.parse(
@@ -380,9 +436,21 @@ class GeminiService {
             'Gemini request failed after $maxAttempts attempts due to rate limiting.',
           );
         }
-
-        // Exponential backoff: 2s, 4s, 8s, 16s
-        final delay = Duration(seconds: 2 * (1 << (attempt - 1)));
+        // Exponential backoff (scaled up slightly): 3s, 6s, 12s, 24s with optional jitter
+        final baseSeconds = const String.fromEnvironment(
+          'GEMINI_BACKOFF_BASE_SECONDS',
+          defaultValue: '3',
+        );
+        final base = int.tryParse(baseSeconds) ?? 3;
+        var delay = Duration(seconds: base * (1 << (attempt - 1)));
+        // Add light jitter ±15%
+        final jitterMillis = (delay.inMilliseconds * 0.15).round();
+        final sign = (DateTime.now().millisecond % 2 == 0) ? 1 : -1;
+        delay = Duration(
+          milliseconds:
+              delay.inMilliseconds +
+              sign * (DateTime.now().microsecondsSinceEpoch % jitterMillis),
+        );
         print('Rate limit hit. Waiting for $delay before retrying...');
         if (onRateLimit != null) {
           onRateLimit(delay);
@@ -428,16 +496,27 @@ class GeminiService {
       violenceLevel: violenceLevel,
     );
 
-    final cleanedText = await filterText(
+    var cleanedText = await filterText(
       text: paragraph, // Send original text
       prompt: prompt,
       onRateLimit: onRateLimit,
     );
 
+    // R-level safeguard: if any dimension is R (4) and model returned an empty
+    // paragraph, revert to original to enforce "minimal/no filtering" rule.
+    final anyR =
+        profanityLevel == 4 || sexualContentLevel == 4 || violenceLevel == 4;
+    if (anyR && paragraph.trim().isNotEmpty && cleanedText.trim().isEmpty) {
+      cleanedText = paragraph; // preserve original content
+    }
+
     return GeminiFilterResponse.fromTexts(
       original: paragraph,
       cleaned: cleanedText,
       chapterIndex: chapterIndex,
+      skipProfanityCategorization: skipProfanityCategorization,
+      skipSexualCategorization: skipSexualCategorization,
+      skipViolenceCategorization: skipViolenceCategorization,
     );
   }
 
@@ -470,6 +549,25 @@ class GeminiService {
     buffer.writeln(
       'You are a content filter for books. Your task is to clean the following text by removing or rephrasing inappropriate content based on the specified sensitivity levels.',
     );
+
+    // Note which dimensions are unrated
+    final unratedDimensions = <String>[];
+    if (profanityLevel == 5) unratedDimensions.add('language/profanity');
+    if (sexualContentLevel == 5) unratedDimensions.add('sexual content');
+    if (violenceLevel == 5) unratedDimensions.add('violence');
+
+    if (unratedDimensions.isNotEmpty) {
+      buffer.writeln('⚠️ UNRATED DIMENSIONS - DO NOT FILTER:');
+      buffer.writeln(
+        'The following content types are UNRATED and must be kept EXACTLY as written:',
+      );
+      for (final dim in unratedDimensions) {
+        buffer.writeln(
+          '  - $dim: Keep ALL content unchanged, no matter how strong',
+        );
+      }
+      buffer.writeln();
+    }
     buffer.writeln();
     buffer.writeln('CRITICAL RULES - FOLLOW EXACTLY:');
     buffer.writeln(
@@ -558,7 +656,7 @@ class GeminiService {
     );
     buffer.writeln();
 
-    // Language filtering instructions
+    // Language filtering instructions (principle-based, minimal examples)
     if (profanityLevel < 5) {
       buffer.writeln(
         'LANGUAGE/PROFANITY FILTERING (Target Rating: ${_getRatingName(profanityLevel)}):',
@@ -578,84 +676,76 @@ class GeminiService {
       buffer.writeln();
       switch (profanityLevel) {
         case 1: // G Rated
-          buffer.writeln('⚠️ TARGET: G RATING (Suitable for ages 5-10) ⚠️');
+          buffer.writeln('TARGET: G (Early readers / children).');
           buffer.writeln(
-            'Ask: "Would a kindergarten teacher approve this language?"',
-          );
-          buffer.writeln('If NO → Remove it');
-          buffer.writeln();
-          buffer.writeln('G-rated language includes ONLY:');
-          buffer.writeln(
-            '- Neutral words: okay, fine, upset, angry, annoyed, silly',
-          );
-          buffer.writeln('- No insults, no name-calling, no crude words');
-          buffer.writeln();
-          buffer.writeln('PG or higher language (REMOVE):');
-          buffer.writeln(
-            '- Any insults: stupid, idiot, jerk, fool, dumb, moron',
+            'Keep only neutral everyday language. Remove all insults and any form of profanity (even mild).',
           );
           buffer.writeln(
-            '- Mild curses: darn, heck, gosh, oh my god, crap, damn',
+            'If a word expresses crude bodily function or insult → replace with a neutral emotional descriptor ("upset", "bothered").',
           );
-          buffer.writeln('- Body words: butt, fart, pee, poop');
-          buffer.writeln('- All stronger profanity');
+          buffer.writeln(
+            'CRITICAL: Do NOT remove professional, academic, investigative, or procedural language when it contains no profanity.',
+          );
           break;
         case 2: // PG Rated
+          buffer.writeln('TARGET: PG (Family friendly).');
           buffer.writeln(
-            '⚠️ TARGET: PG RATING (Suitable for ages 10+, family viewing) ⚠️',
+            '✅ EXPLICITLY ALLOWED: "darn", "dang", "gosh", "golly", "jeez", "heck", "shoot", "crud" (and similar very mild exclamations).',
           );
-          buffer.writeln('Ask: "Would this be okay in a family movie?"');
-          buffer.writeln('If NO → Remove it');
-          buffer.writeln();
-          buffer.writeln('PG-rated language includes:');
           buffer.writeln(
-            '- Mild expressions: darn, gosh, heck, jeez, oh my god',
+            '❌ MUST REMOVE: "damn", "hell", "crap", "shit", "ass", "bitch", "bastard", "fuck" (and all stronger profanity).',
           );
-          buffer.writeln('- Light insults that aren\'t crude');
-          buffer.writeln();
-          buffer.writeln('PG-13 or higher language (REMOVE):');
           buffer.writeln(
-            '- Moderate profanity: damn, hell, ass, crap, bitch, bastard',
+            'Replace removed words with neutral emotion ("frustrated", "upset") or allowed mild exclamations.',
           );
-          buffer.writeln('- F-words and stronger profanity');
+          buffer.writeln(
+            'CRITICAL: If content contains only PG-allowed words like "gosh" or "darn", DO NOT MODIFY IT.',
+          );
+          buffer.writeln(
+            'When uncertain at PG, prefer keeping mild, non-profane exclamations unmodified.',
+          );
           break;
         case 3: // PG-13 Rated
-          buffer.writeln('⚠️ TARGET: PG-13 RATING (Suitable for teens 13+) ⚠️');
-          buffer.writeln('Ask: "Would this be in a PG-13 movie?"');
-          buffer.writeln('If it\'s R-rated or X-rated language → Remove it');
-          buffer.writeln();
-          buffer.writeln('PG-13 language includes:');
+          buffer.writeln('TARGET: PG-13 (Teen).');
           buffer.writeln(
-            '- damn, hell, ass, crap, bitch, bastard, son of a bitch',
+            '✅ EXPLICITLY ALLOWED: "damn", "hell", "crap", "ass", "bastard", "bitch" (moderate profanity), plus all PG-allowed words.',
           );
-          buffer.writeln();
-          buffer.writeln('R or X-rated language (REMOVE):');
           buffer.writeln(
-            '- F-words: fuck, fucking, motherfucker (any variation)',
+            '❌ MUST REMOVE: "fuck", "fucking", "shit" (strong profanity and f-word variants).',
           );
-          buffer.writeln('- Extreme slurs and graphic profanity');
+          buffer.writeln(
+            'CRITICAL: If content uses only PG-13-allowed profanity (damn, hell, crap, ass, bastard, bitch), DO NOT MODIFY IT.',
+          );
+          buffer.writeln(
+            'Edge cases: Compound words like "half-ass" and contextual uses of "bastard"/"bitch" (non-hate-speech, descriptive) are ALLOWED at PG-13.',
+          );
+          buffer.writeln(
+            'Only remove or soften f-word variants and extremely graphic language.',
+          );
           break;
         case 4: // R Rated
-          buffer.writeln('⚠️ TARGET: R RATING (Adult content, 17+) ⚠️');
-          buffer.writeln('Ask: "Would this be in an R-rated movie?"');
+          buffer.writeln('TARGET: R (Adult - MINIMAL TO NO FILTERING).');
           buffer.writeln(
-            'If it\'s X-rated (pornographic) language → Remove it',
+            '⚠️ CRITICAL: R rating allows ALL standard profanity including f-word and all sexual/violent language.',
           );
-          buffer.writeln();
-          buffer.writeln('R-rated language includes:');
           buffer.writeln(
-            '- Most profanity including damn, hell, ass, bitch, bastard',
+            '✅ KEEP EVERYTHING: All profanity, strong language, explicit references are ALLOWED at R rating.',
           );
-          buffer.writeln();
-          buffer.writeln('X-rated language (REMOVE):');
-          buffer.writeln('- Excessive f-words (more than occasional)');
-          buffer.writeln('- Pornographic or extremely graphic language');
+          buffer.writeln(
+            '❌ Only remove if content would be rated NC-17/X: extreme torture detail, graphic sexual penetration descriptions, or snuff content.',
+          );
+          buffer.writeln(
+            'CRITICAL: For R rating, your default action is to RETURN THE TEXT UNCHANGED. Only filter the most extreme NC-17/X content.',
+          );
+          buffer.writeln(
+            'If in doubt at R, prefer keeping the original wording unchanged.',
+          );
           break;
       }
       buffer.writeln();
     }
 
-    // Sexual content filtering instructions
+    // Sexual content filtering instructions (principle-based)
     if (sexualContentLevel < 5) {
       buffer.writeln(
         'SEXUAL CONTENT FILTERING (Target Rating: ${_getRatingName(sexualContentLevel)}):',
@@ -674,147 +764,64 @@ class GeminiService {
       );
       buffer.writeln();
       switch (sexualContentLevel) {
-        case 1: // G Rated
-          buffer.writeln('⚠️ TARGET: G RATING (Suitable for ages 5-10) ⚠️');
+        case 1: // G
           buffer.writeln(
-            'Ask: "Would this be in a children book like Harry Potter?"',
-          );
-          buffer.writeln('If NO -> Remove it');
-          buffer.writeln();
-          buffer.writeln('G-rated content includes ONLY:');
-          buffer.writeln(
-            '- "They were friends", "they were married", "they worked together"',
-          );
-          buffer.writeln('- Basic family affection (parent hugs child)');
-          buffer.writeln(
-            '- NO romance, NO attraction, NO physical intimacy at all',
-          );
-          buffer.writeln();
-          buffer.writeln('PG or higher romantic/sexual content (REMOVE ALL):');
-          buffer.writeln('- ANY kissing, hugging romantically, hand-holding');
-          buffer.writeln('- ANY dating, crushes, flirting, attraction');
-          buffer.writeln(
-            '- ANY physical descriptions with romantic intent (beautiful, attractive, sexy)',
-          );
-          buffer.writeln('- ANY touching (caressing, stroking, embracing)');
-          buffer.writeln('- ANY bedroom scenes, undressing, sleeping together');
-          buffer.writeln(
-            '- ANY words like: moaned, gasped, desire, passion, intimate',
+            'G: Remove all romantic or suggestive content. Keep only neutral relationships (friends, family).',
           );
           buffer.writeln(
-            '- ANY dialogue requesting touch: "touch me", "hold me", "I want you"',
-          );
-          buffer.writeln(
-            '- ANY innuendos or suggestive language (double meanings, winking, suggestive smiles)',
-          );
-          buffer.writeln(
-            '- If entire paragraph is romantic -> REMOVE or replace with "their relationship continued"',
-          );
-          buffer.writeln();
-          buffer.writeln(
-            'CRITICAL: This is a CHILDREN\'S rating. Err on the side of removal.',
-          );
-          buffer.writeln(
-            'If you\'re unsure whether something is appropriate -> REMOVE IT',
-          );
-          buffer.writeln();
-          buffer.writeln(
-            'CRITICAL BIAS: For G-rated content, you MUST have a strong bias for removing any and all sexual or romantic content, even if it spoils the narrative. Your primary goal is to protect, not to preserve the story.',
-          );
-          buffer.writeln(
-            'If a setting is inherently not G-rated (e.g., a bar, a nightclub, a strip club), you should remove the entire scene or replace it with a generic, G-rated equivalent like "they met at a cafe" or "they went to a restaurant".',
+            'If a paragraph is entirely romantic/sexual → replace with a single neutral summary or remove.',
           );
           break;
-        case 2: // PG Rated
+        case 2: // PG
           buffer.writeln(
-            '⚠️ TARGET: PG RATING (Suitable for ages 10+, family viewing) ⚠️',
+            'PG: Permit mild innocent romance (brief hand-hold, a quick non-sensual kiss, hugs, friendly physical contact).',
           );
           buffer.writeln(
-            'Ask: "Would this be in a family movie or young adult book?"',
-          );
-          buffer.writeln('If NO -> Remove it');
-          buffer.writeln();
-          buffer.writeln('PG-rated content includes:');
-          buffer.writeln(
-            '- "They fell in love", "they held hands", "he kissed her briefly"',
-          );
-          buffer.writeln('- Light romantic scenes without sensuality');
-          buffer.writeln();
-          buffer.writeln('PG-13 or higher content (REMOVE):');
-          buffer.writeln(
-            '- Passionate kissing with detail, sensual descriptions',
+            '✅ ALLOWED: Holding hands, cheek kiss, brief kiss on lips, emotional connection, gentle touch.',
           );
           buffer.writeln(
-            '- Sexual tension, innuendo, suggestive language, double meanings',
+            '❌ REMOVE: Passionate kissing, body focus, sensuality, arousal, implied intimacy, sexual tension.',
           );
           buffer.writeln(
-            '- Body descriptions (curves, attractive body, physique)',
-          );
-          buffer.writeln('- Intimate touching, caressing, bedroom scenes');
-          buffer.writeln('- Desire, arousal, sexual thoughts or fantasies');
-          buffer.writeln(
-            '- Suggestive clothing descriptions, provocative appearance',
-          );
-          buffer.writeln('- ANY dialogue with sexual subtext or flirtation');
-          buffer.writeln();
-          buffer.writeln(
-            'CRITICAL: This is FAMILY VIEWING rating. Err on the side of removal.',
-          );
-          buffer.writeln(
-            'If you\'re unsure whether something is too suggestive -> REMOVE IT',
-          );
-          buffer.writeln(
-            'Think: "Would I let my 10-year-old child read this?" If NO -> REMOVE',
-          );
-          buffer.writeln();
-          buffer.writeln(
-            'CRITICAL BIAS: For PG-rated content, you must have a bias for removing suggestive content, even if it slightly impacts the narrative. If a scene is borderline PG-13, you should remove the suggestive elements to make it clearly PG.',
-          );
-          buffer.writeln(
-            'If a setting is inherently sexualized (e.g., a strip club), you must remove the scene entirely or heavily sanitize it to focus only on non-sexual plot points. Do not describe the setting.',
+            'CRITICAL: If content shows only innocent hand-holding and brief kisses, DO NOT MODIFY IT.',
           );
           break;
-        case 3: // PG-13 Rated
-          buffer.writeln('⚠️ TARGET: PG-13 RATING (Suitable for teens 13+) ⚠️');
-          buffer.writeln('Ask: "Would this be in a teen movie or YA novel?"');
-          buffer.writeln('If it is R-rated or X-rated -> Remove it');
-          buffer.writeln();
-          buffer.writeln('PG-13 content includes:');
+        case 3: // PG-13
           buffer.writeln(
-            '- Passionate kissing, romantic chemistry, mild innuendo',
+            'PG-13: Allow implied intimacy (fade-to-black), passionate kissing, romantic physical contact.',
           );
-          buffer.writeln('- "They spent the night together" (fade-to-black)');
-          buffer.writeln('- Vague physical attraction');
-          buffer.writeln();
-          buffer.writeln('R or X-rated content (REMOVE):');
-          buffer.writeln('- Explicit sex scenes, graphic sexual acts');
-          buffer.writeln('- Anatomical details, references to sexual organs');
-          buffer.writeln('- Detailed undressing, explicit bedroom scenes');
-          buffer.writeln('- Descriptions of arousal in graphic terms');
+          buffer.writeln(
+            '✅ ALLOWED: Passionate kissing, bodies pressed close, "spent the night together", "made love" (implied only), sensual tension, partial undressing leading to fade-to-black.',
+          );
+          buffer.writeln(
+            '❌ REMOVE: Explicit sexual acts, anatomical detail, graphic descriptions of intercourse, visible nudity descriptions.',
+          );
+          buffer.writeln(
+            'CRITICAL: If content implies intimacy but fades to black ("later that evening" / "they were together"), DO NOT MODIFY IT.',
+          );
+          buffer.writeln(
+            'HARD GUARDRAIL: If a paragraph contains ONLY heated kissing + bodies pressed + implied progression (no anatomical specifics, no explicit act terms) you MUST return it EXACTLY AS WRITTEN (no summarizing, shortening, tonal softening, or replacement).',
+          );
           break;
-        case 4: // R Rated
-          buffer.writeln('⚠️ TARGET: R RATING (Adult content, 17+) ⚠️');
+        case 4: // R
           buffer.writeln(
-            'Ask: "Would this be in an R-rated movie or adult novel?"',
+            'R: Allow explicit sexual content and references (MINIMAL FILTERING).',
           );
-          buffer.writeln('If it is X-rated (pornographic) -> Remove it');
-          buffer.writeln();
-          buffer.writeln('R-rated content includes:');
-          buffer.writeln('- "They made love", intimate scenes with sensuality');
-          buffer.writeln('- References to sex, romantic body descriptions');
-          buffer.writeln();
-          buffer.writeln('X-rated content (REMOVE):');
           buffer.writeln(
-            '- Pornographic descriptions, extremely graphic sexual acts',
+            '✅ ALLOWED: Explicit sexual acts, undressing, touching intimate areas, sensual detail, moaning/gasping, penetration references.',
           );
-          buffer.writeln('- Clinical sexual details, explicit positions');
-          buffer.writeln('- Excessive graphic sexual content');
+          buffer.writeln(
+            '❌ Only remove if NC-17/X: Extreme fetish detail, graphic close-up anatomical descriptions written like pornography.',
+          );
+          buffer.writeln(
+            'CRITICAL: R rating allows sexually explicit content. Default to KEEPING THE TEXT UNCHANGED unless it crosses into pornographic territory.',
+          );
           break;
       }
       buffer.writeln();
     }
 
-    // Violence filtering instructions
+    // Violence filtering instructions (principle-based)
     if (violenceLevel < 5) {
       buffer.writeln(
         'VIOLENCE FILTERING (Target Rating: ${_getRatingName(violenceLevel)}):',
@@ -833,72 +840,74 @@ class GeminiService {
       );
       buffer.writeln();
       switch (violenceLevel) {
-        case 1: // G Rated
-          buffer.writeln('⚠️ TARGET: G RATING (Suitable for ages 5-10) ⚠️');
+        case 1: // G
           buffer.writeln(
-            'Ask: "Would this be in a children book like Harry Potter?"',
+            'G: Keep only non-physical conflict (arguments, tension). Remove all physical harm, weapons, injury, threat mentions.',
           );
-          buffer.writeln('If NO -> Remove it');
-          buffer.writeln();
-          buffer.writeln('G-rated content includes ONLY:');
           buffer.writeln(
-            '- "There was a disagreement", "they argued", "there was tension"',
+            'ALLOWED AT G: Abstract references like "heated dispute", "verbal clash", "threat of violence" (as long as NO physical contact happens). Do NOT remove words like "violence" when they refer to potential or avoided harm. Preserve professional/legal/investigative descriptions of conflict if no injury occurs.',
           );
-          buffer.writeln('- NO violence, NO weapons, NO injuries at all');
-          buffer.writeln();
-          buffer.writeln('PG or higher violence (REMOVE ALL):');
           buffer.writeln(
-            '- ANY hitting, punching, kicking, slapping, fighting',
+            'DO NOT: invent new outcomes, escalate a verbal exchange into physical action, or delete an entire paragraph that only contains verbal tension.',
           );
-          buffer.writeln('- ANY weapons (guns, knives, swords)');
-          buffer.writeln('- ANY blood, injuries, wounds, pain');
-          buffer.writeln('- ANY death, killing, threats');
           buffer.writeln(
-            '- If entire paragraph is violent -> REMOVE or replace with "there was conflict"',
+            'HARD GUARDRAIL: If a paragraph has ONLY verbal disagreement / posture / abstract threat language, RETURN IT UNCHANGED (no shortening, no paraphrase).',
           );
           break;
-        case 2: // PG Rated
+        case 2: // PG
+          buffer.writeln('PG: Allow mild, non-graphic physical action.');
           buffer.writeln(
-            '⚠️ TARGET: PG RATING (Suitable for ages 10+, family viewing) ⚠️',
+            '✅ ALLOWED: Shoving, scuffling, brief fights, mention of being hit, non-graphic pain ("it hurt").',
           );
-          buffer.writeln('Ask: "Would this be in a family action movie?"');
-          buffer.writeln('If NO -> Remove it');
-          buffer.writeln();
-          buffer.writeln('PG-rated content includes:');
-          buffer.writeln('- "They fought", "he was hurt", mild tension');
-          buffer.writeln('- Light action without graphic detail');
-          buffer.writeln();
-          buffer.writeln('PG-13 or higher violence (REMOVE):');
-          buffer.writeln('- Blood, detailed injuries, graphic fights');
-          buffer.writeln('- Stabbings, shootings with detail');
-          buffer.writeln('- Severe pain descriptions, torture');
+          buffer.writeln(
+            '❌ REMOVE: Blood, injury detail, weapon focus, prolonged violence, graphic pain descriptions.',
+          );
+          buffer.writeln(
+            'CRITICAL: If content shows only brief scuffles without blood or injury detail, DO NOT MODIFY IT.',
+          );
+          buffer.writeln(
+            'GUARDRAIL: A playground shove + minor scrape stays UNCHANGED. Do NOT add moralizing narration or alter chronology. If you must soften, replace ONLY the single offending word/phrase (e.g., remove explicit "blood" mention).',
+          );
           break;
-        case 3: // PG-13 Rated
-          buffer.writeln('⚠️ TARGET: PG-13 RATING (Suitable for teens 13+) ⚠️');
-          buffer.writeln('Ask: "Would this be in a teen action movie?"');
-          buffer.writeln('If it is R-rated or X-rated -> Remove it');
-          buffer.writeln();
-          buffer.writeln('PG-13 content includes:');
-          buffer.writeln('- Action violence, fights, injuries');
-          buffer.writeln('- Some blood, weapons use');
-          buffer.writeln();
-          buffer.writeln('R or X-rated violence (REMOVE):');
-          buffer.writeln('- Extremely graphic violence, gore');
-          buffer.writeln('- Detailed torture, mutilation');
-          buffer.writeln('- Excessive blood and brutal deaths');
+        case 3: // PG-13
+          buffer.writeln(
+            'PG-13: Allow sustained action with blood and injury.',
+          );
+          buffer.writeln(
+            '✅ ALLOWED: Blood mentions ("drawing blood", "crimson spread"), weapon use (blades, guns), injuries (wounds, cuts), staggering, pain.',
+          );
+          buffer.writeln(
+            '❌ REMOVE: Graphic gore (organs visible, bone showing through flesh), extreme torture detail, prolonged suffering focus.',
+          );
+          buffer.writeln(
+            'CRITICAL: If content mentions blood and weapons without extreme gore, DO NOT MODIFY IT.',
+          );
+          buffer.writeln(
+            'EDGE: Single-sentence vivid injury descriptions are fine; only tone down multi-sentence anatomical gore sequences.',
+          );
           break;
-        case 4: // R Rated
-          buffer.writeln('⚠️ TARGET: R RATING (Adult content, 17+) ⚠️');
-          buffer.writeln('Ask: "Would this be in an R-rated action movie?"');
-          buffer.writeln('If it is X-rated (extreme horror/gore) -> Remove it');
-          buffer.writeln();
-          buffer.writeln('R-rated content includes:');
-          buffer.writeln('- Intense violence, graphic injuries');
-          buffer.writeln('- Blood, brutal fights, realistic combat');
-          buffer.writeln();
-          buffer.writeln('X-rated content (REMOVE):');
-          buffer.writeln('- Extreme torture porn, sadistic violence');
-          buffer.writeln('- Excessive gore for shock value');
+        case 4: // R
+          buffer.writeln(
+            'R: Allow intense violence, graphic injury, and gore (MINIMAL FILTERING).',
+          );
+          buffer.writeln(
+            '✅ ALLOWED: Graphic violence, blood spurting, visible bone/organs, intense injury detail, screaming, violent death.',
+          );
+          buffer.writeln(
+            '❌ Only remove if NC-17/X: Prolonged torture porn, sadistic detail designed purely to shock with no narrative purpose.',
+          );
+          buffer.writeln(
+            'CRITICAL: R rating allows graphic violence. Default to KEEPING THE TEXT UNCHANGED unless it crosses into torture-porn territory.',
+          );
+          buffer.writeln(
+            'HARD GUARDRAIL: NEVER delete an entire paragraph at R. NEVER output an empty paragraph. If violence is extreme, lightly soften ONLY the most gratuitous anatomical or lingering torture descriptors; retain sequence of events.',
+          );
+          buffer.writeln(
+            'If a paragraph is sustained torture: keep structure; you may replace ultra-graphic clauses with concise phrases like "inflicted severe pain" or "the injuries were extensive". DO NOT remove all content.',
+          );
+          buffer.writeln(
+            'If unsure whether detail is NC-17/X, KEEP IT. Ambiguity defaults to preservation at R.',
+          );
           break;
       }
       buffer.writeln();
@@ -907,6 +916,20 @@ class GeminiService {
     buffer.writeln(
       'Now, filter the following text according to these rules. Return ONLY the cleaned text:',
     );
+    buffer.writeln('FAILURE CONDITIONS TO AVOID:');
+    buffer.writeln('- Deleting or collapsing paragraphs (must preserve count)');
+    buffer.writeln(
+      '- Returning blank paragraphs (never output length 0 unless original was blank)',
+    );
+    buffer.writeln('- Adding new plot details (events not present originally)');
+    buffer.writeln('- Moralizing tone shifts or character voice changes');
+    buffer.writeln(
+      '- Replacing entire R-rated violent paragraphs with emptiness',
+    );
+    buffer.writeln(
+      '- Expanding mild scenes with invented explanatory sentences',
+    );
+    buffer.writeln();
 
     return buffer.toString();
   }
@@ -969,37 +992,37 @@ extension RatingExtension on GeminiService {
   }) async {
     final prompt =
         '''Analyze the following text and rate it for content in three categories.
-For each category, respond with ONLY one of: G, PG, PG-13, R, or X
+  For each category, respond with ONLY one of: G, PG, PG-13, R, or X
 
-Categories:
-1. LANGUAGE (profanity, cursing)
-   - G: No profanity
-   - PG: Mild words like "damn", "hell"
-   - PG-13: More frequent mild profanity
-   - R: Strong profanity (f-word, etc)
-   - X: Extreme profanity
+  Categories (updated definitions for consistency with filtering logic):
+  1. LANGUAGE (profanity, cursing)
+    - G: No profanity or insults at all (no "stupid", "idiot")
+    - PG: ONLY very mild exclamations (darn, gosh, gee, jeez, heck) and neutral language. No damn/hell/crap/ass/shit/f*** etc.
+    - PG-13: Includes moderate profanity (damn, hell, crap, ass, bastard) but NO f-word usage
+    - R: Strong profanity including f-word usage, repeated harsh profanity
+    - X: Extreme or graphic sexual profanity / hate slurs (language only)
 
-2. SEXUAL CONTENT (romantic, sexual, suggestive)
-   - G: No romantic/sexual content
-   - PG: Innocent kissing, hand-holding
-   - PG-13: Passionate kissing, emotional intimacy, suggestive scenes
-   - R: Explicit descriptions of sexual acts
-   - X: Graphic pornographic content
+  2. SEXUAL CONTENT (romantic, sexual, suggestive)
+    - G: No romantic/sexual content (only platonic)
+    - PG: Light romance: brief hand-holding, a single brief kiss, mild affection
+    - PG-13: Passionate kissing, implied intimacy (fade-to-black), mild sensual language
+    - R: Descriptive sexual scenes or sustained intimate detail
+    - X: Explicit sexual activity described graphically
 
-3. VIOLENCE (fighting, gore, harm)
-   - G: No violence
-   - PG: Mild action, slapstick
-   - PG-13: Combat, injuries, some blood
-   - R: Graphic violence, gore
-   - X: Extreme graphic violence
+  3. VIOLENCE (fighting, gore, harm)
+    - G: No physical violence (arguments only)
+    - PG: Mild action, non-detailed scuffles, no blood
+    - PG-13: Combat, injuries, some blood, weapon use without gore detail
+    - R: Graphic injury detail, notable gore, intense sustained violence
+    - X: Extreme gore/torture, sadistic or shocking graphic detail
 
-Respond in exactly this format (one rating per line):
-LANGUAGE: [G/PG/PG-13/R/X]
-SEXUAL: [G/PG/PG-13/R/X]
-VIOLENCE: [G/PG/PG-13/R/X]
-SUMMARY: [Brief 1-2 sentence summary of the most restrictive content]
+  Respond in exactly this format (one rating per line):
+  LANGUAGE: [G/PG/PG-13/R/X]
+  SEXUAL: [G/PG/PG-13/R/X]
+  VIOLENCE: [G/PG/PG-13/R/X]
+  SUMMARY: [Brief 1-2 sentence summary of the most restrictive content]
 
-Text to analyze:''';
+  Text to analyze:''';
 
     try {
       final result = await filterText(
