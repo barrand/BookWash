@@ -97,9 +97,10 @@ class EpubWriter {
       final paragraphs = chapterParagraphs[i] ?? [];
 
       final chapterHtml = _generateChapterHtml(
-        chapter.title,
-        paragraphs,
-        chapter.rawHtml,
+        originalIndex: i,
+        title: chapter.title,
+        paragraphs: paragraphs,
+        originalHtml: chapter.rawHtml,
       );
 
       // Validate the generated XHTML
@@ -110,11 +111,12 @@ class EpubWriter {
     }
   }
 
-  String _generateChapterHtml(
-    String title,
-    List<String> paragraphs,
-    String originalHtml,
-  ) {
+  String _generateChapterHtml({
+    required int originalIndex,
+    required String title,
+    required List<String> paragraphs,
+    required String originalHtml,
+  }) {
     try {
       // Convert HTML5-style self-closing tags to XHTML format
       final xhtmlContent = _normalizeToXhtml(originalHtml);
@@ -126,25 +128,31 @@ class EpubWriter {
       final bodyElement = document.findAllElements('body').firstOrNull;
 
       if (bodyElement != null) {
-        // Remove all existing children from body
-        bodyElement.children.clear();
+        final rawTitle = _buildDisplayTitle(originalIndex, title);
+        final h1 = XmlElement(XmlName('h1'))..children.add(XmlText(rawTitle));
 
-        // Add cleaned paragraphs as new <p> elements
+        if (paragraphs.isEmpty) {
+          // Keep original body content, just prepend the standardized chapter heading
+          bodyElement.children.insert(0, h1);
+          return document.toXmlString(pretty: false);
+        }
+
+        // Replace body content with heading + cleaned paragraphs
+        bodyElement.children.clear();
+        bodyElement.children.add(h1);
         for (final paragraphText in paragraphs) {
           final pElement = XmlElement(XmlName('p'));
           pElement.children.add(XmlText(paragraphText));
           bodyElement.children.add(pElement);
         }
-
-        // Return the serialized XML with proper formatting
         return document.toXmlString(pretty: false);
       }
 
       // If no body found, fall back to creating basic structure
-      final escapedTitle = _escapeXml(title);
-      final paragraphsHtml = paragraphs
-          .map((p) => '    <p>${_escapeXml(p)}</p>')
-          .join('\n');
+      final escapedTitle = _escapeXml(_buildDisplayTitle(originalIndex, title));
+      final paragraphsHtml = paragraphs.isEmpty
+          ? ''
+          : paragraphs.map((p) => '    <p>${_escapeXml(p)}</p>').join('\n');
 
       return '''<?xml version='1.0' encoding='utf-8'?>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -153,15 +161,15 @@ class EpubWriter {
   </head>
   <body>
     <h1>$escapedTitle</h1>
-$paragraphsHtml
+${paragraphsHtml}
   </body>
 </html>''';
     } catch (e) {
       // If XML parsing fails, fall back to the regex method
       print('XML parsing failed, falling back to regex replacement. Error: $e');
-      final paragraphsHtml = paragraphs
-          .map((p) => '    <p>${_escapeXml(p)}</p>')
-          .join('\n');
+      final paragraphsHtml = paragraphs.isEmpty
+          ? ''
+          : paragraphs.map((p) => '    <p>${_escapeXml(p)}</p>').join('\n');
 
       final bodyRegex = RegExp(
         r'<body[^>]*>([\s\S]*)</body>',
@@ -176,7 +184,7 @@ $paragraphsHtml
       }
 
       // Fallback if body tag is not found
-      final escapedTitle = _escapeXml(title);
+      final escapedTitle = _escapeXml(_buildDisplayTitle(originalIndex, title));
       return '''<?xml version='1.0' encoding='utf-8'?>
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
@@ -184,10 +192,23 @@ $paragraphsHtml
   </head>
   <body>
     <h1>$escapedTitle</h1>
-$paragraphsHtml
+${paragraphsHtml}
   </body>
 </html>''';
     }
+  }
+
+  String _buildDisplayTitle(int index, String rawTitle) {
+    final chapterNumber = index + 1;
+    final cleaned = rawTitle.trim();
+    if (cleaned.isEmpty) {
+      return 'Chapter $chapterNumber';
+    }
+    // If title already contains a chapter indicator, keep as-is but prepend standardized chapter number for consistency
+    if (RegExp(r'chapter\s+\d+', caseSensitive: false).hasMatch(cleaned)) {
+      return 'Chapter $chapterNumber – $cleaned';
+    }
+    return 'Chapter $chapterNumber – $cleaned';
   }
 
   Future<void> _createContentOpf(
@@ -339,18 +360,13 @@ ${navPoints.toString().trimRight()}
   }
 
   String _escapeXml(String text) {
+    // Minimal XML escaping; let the XmlText serializer handle typical cases.
     return text
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
-        .replaceAll("'", '&apos;')
-        .replaceAll('\u2019', '&apos;') // Right single quote
-        .replaceAll('\u2018', '&apos;') // Left single quote
-        .replaceAll('\u201D', '&quot;') // Right double quote
-        .replaceAll('\u201C', '&quot;') // Left double quote
-        .replaceAll('\u2014', '&#8212;') // Em dash
-        .replaceAll('\u2013', '&#8211;'); // En dash
+        .replaceAll("'", '&apos;');
   }
 
   /// Normalize HTML5-style self-closing tags to XHTML format

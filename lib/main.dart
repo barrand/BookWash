@@ -709,6 +709,35 @@ class _BookWashHomeState extends State<BookWashHome> {
               .where((p) => p.trim().isNotEmpty)
               .toList();
 
+          // DEBUG: Log original vs cleaned paragraphs (non-UI)
+          final originalParas = chapterText
+              .split('\n\n')
+              .where((p) => p.trim().isNotEmpty)
+              .toList();
+          final maxPairs =
+              originalParas.length > cleanedChapterParagraphs.length
+              ? originalParas.length
+              : cleanedChapterParagraphs.length;
+          for (int pi = 0; pi < maxPairs; pi++) {
+            final orig = pi < originalParas.length
+                ? originalParas[pi]
+                : '<missing>';
+            final cleaned = pi < cleanedChapterParagraphs.length
+                ? cleanedChapterParagraphs[pi]
+                : '<missing>';
+            if (orig.trim() != cleaned.trim()) {
+              print(
+                'DEBUG: Chapter ${chapterIdx + 1} paragraph ${pi + 1} changed',
+              );
+              print('  ORIGINAL: ' + orig);
+              print('  CLEANED : ' + cleaned);
+            } else {
+              print(
+                'DEBUG: Chapter ${chapterIdx + 1} paragraph ${pi + 1} unchanged',
+              );
+            }
+          }
+
           // Add all cleaned paragraphs to this chapter
           for (final para in cleanedChapterParagraphs) {
             cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
@@ -829,6 +858,34 @@ class _BookWashHomeState extends State<BookWashHome> {
                   .split('\n\n')
                   .where((p) => p.trim().isNotEmpty)
                   .toList();
+
+              // DEBUG: Log original vs second-pass cleaned paragraphs (non-UI)
+              final firstPassParas = cleanedChapterText
+                  .split('\n\n')
+                  .where((p) => p.trim().isNotEmpty)
+                  .toList();
+              final maxPairs2 = firstPassParas.length > reCleanedParas.length
+                  ? firstPassParas.length
+                  : reCleanedParas.length;
+              for (int pi = 0; pi < maxPairs2; pi++) {
+                final orig2 = pi < firstPassParas.length
+                    ? firstPassParas[pi]
+                    : '<missing>';
+                final cleaned2 = pi < reCleanedParas.length
+                    ? reCleanedParas[pi]
+                    : '<missing>';
+                if (orig2.trim() != cleaned2.trim()) {
+                  print(
+                    'DEBUG: Chapter ${chapterIdx + 1} second-pass paragraph ${pi + 1} changed',
+                  );
+                  print('  FIRST  : ' + orig2);
+                  print('  CLEANED: ' + cleaned2);
+                } else {
+                  print(
+                    'DEBUG: Chapter ${chapterIdx + 1} second-pass paragraph ${pi + 1} unchanged',
+                  );
+                }
+              }
 
               // Replace last chapter's paragraphs with second pass output
               final startIndex =
