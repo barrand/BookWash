@@ -17,6 +17,7 @@ Options:
 """
 
 import argparse
+import functools
 import os
 import re
 import sys
@@ -26,6 +27,9 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Optional
 from html import escape as html_escape
+
+# Force unbuffered output for real-time logging
+print = functools.partial(print, flush=True)
 
 
 @dataclass

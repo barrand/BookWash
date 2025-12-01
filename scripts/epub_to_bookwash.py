@@ -12,6 +12,7 @@ If output is not specified, uses the input filename with .bookwash extension.
 """
 
 import argparse
+import functools
 import os
 import re
 import shutil
@@ -20,6 +21,9 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+# Force unbuffered output for real-time logging
+print = functools.partial(print, flush=True)
 
 
 # --- HTML Text Extractor ---

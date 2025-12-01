@@ -25,6 +25,7 @@ Environment:
 """
 
 import argparse
+import functools
 import json
 import os
 import re
@@ -34,6 +35,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+# Force unbuffered output for real-time logging
+print = functools.partial(print, flush=True)
 
 # Try to import requests, fall back to urllib
 try:
@@ -63,9 +67,9 @@ LEVEL_TO_RATING = {
     5: 'X',
 }
 
-DEFAULT_MODEL = 'gemini-2.0-flash-exp'
+DEFAULT_MODEL = 'gemini-1.5-flash'
 FALLBACK_MODELS = [
-    'gemini-2.5-flash',        # Newest flash - fast
+    'gemini-2.0-flash-exp',    # Experimental flash
     'gemini-2.0-flash',        # Stable flash - fast  
     'gemini-2.0-flash-lite',   # Lite version - fastest
 ]
@@ -486,12 +490,18 @@ Categories:
    - R: Strong profanity including f-word usage
    - X: Extreme sexual profanity or hate slurs
 
-2. SEXUAL CONTENT (romantic, sexual, suggestive)
-   - G: No romantic/sexual content (only platonic)
-   - PG: Light romance: brief hand-holding, a single brief kiss
-   - PG-13: Passionate kissing, implied intimacy (fade-to-black)
-   - R: Descriptive sexual scenes or sustained intimate detail
+2. SEXUAL CONTENT (romantic, sexual, suggestive, revealing descriptions)
+   - G: No romantic/sexual content, no body-focused descriptions
+   - PG: Light romance (hand-holding, brief kiss), no suggestive body descriptions
+   - PG-13: Passionate kissing, implied intimacy (fade-to-black), OR suggestive clothing/body descriptions (cleavage, tight/revealing clothes, bare skin emphasis, physical attractiveness focus)
+   - R: Descriptive sexual scenes, sustained intimate detail, OR explicit body descriptions focusing on breasts, thighs, buttocks, or other sensual areas
    - X: Explicit sexual activity described graphically
+
+   IMPORTANT: Rate as PG-13 or higher if the text:
+   - Describes revealing or sexualized clothing (low-cut, tight, minimal coverage)
+   - Focuses on body curves, skin, or physical attractiveness in a sensual way
+   - Emphasizes breasts, cleavage, thighs, or other typically sexualized body parts
+   - Uses words like "curve", "smooth skin", "bare", "exposed", "tight", "revealing"
 
 3. VIOLENCE (fighting, gore, harm)
    - G: No physical violence (arguments only)
@@ -635,10 +645,12 @@ SEXUAL CONTENT FILTERING (Target: {sexual_name}):"""
 - Replace entire romantic scenes with: "They talked for a while."
 - Remove: dancing together, body contact, longing looks, attraction descriptions
 - No physical descriptions of characters that could be seen as attractive
+- Remove ALL descriptions of revealing clothing, body curves, exposed skin
 - Convert intimate settings to neutral: "They met at the venue." """
             else:
                 prompt += """
 - Remove all romantic/suggestive content
+- Remove all descriptions of revealing clothing or body-focused descriptions
 - Keep only platonic relationships"""
         elif sexual == 2:  # PG
             if aggression >= 2:
@@ -649,16 +661,23 @@ SEXUAL CONTENT FILTERING (Target: {sexual_name}):"""
 - REMOVE: "breath hot", "lips close to ear", "body pressed against", "hips moving"
 - REMOVE: descriptions of arousal, desire, physical attraction to body parts
 - REMOVE: intimate whispers, seductive behavior, lingering touches
+- REMOVE: revealing clothing descriptions (cleavage, bare skin, tight clothes focusing on body)
+- REMOVE: emphasis on breasts, thighs, buttocks, curves, smooth skin in sensual context
 - Replace removed content with simple neutral summary: "They spent time together."
 - When in doubt about whether something is PG, REMOVE IT"""
             else:
                 prompt += """
 - ALLOWED: Hand-holding, brief kiss, hugs, warm affection
-- REMOVE: Passionate kissing, body focus, arousal, implied intimacy"""
+- REMOVE: Passionate kissing, body focus, arousal, implied intimacy
+- REMOVE: Suggestive clothing descriptions (revealing outfits, emphasis on exposed skin)
+- REMOVE: Body-focused descriptions emphasizing curves, breasts, thighs, or physical attractiveness in a sensual way
+- Rewrite clothing descriptions to be neutral (just mention the type of clothing without sensual focus)"""
         elif sexual == 3:  # PG-13
             prompt += """
 - ALLOWED: Passionate kissing, implied intimacy (fade-to-black), sensual tension
-- REMOVE: Explicit acts, anatomical detail, graphic descriptions"""
+- ALLOWED: Brief mentions of attractive appearance or clothing
+- REMOVE: Explicit acts, anatomical detail, graphic descriptions
+- REMOVE: Extended focus on revealing clothing or body parts in a sexual context"""
         elif sexual == 4:  # R
             prompt += """
 - KEEP almost everything - only remove NC-17/pornographic content"""
@@ -865,7 +884,7 @@ def cmd_rate(bw: BookWashFile, client: GeminiClient,
     """Rate all chapters (Pass A)."""
     print(f"Rating {len(bw.chapters)} chapters...")
     print(f"Target levels: language={target_lang} ({LEVEL_TO_RATING[target_lang]}), "
-          f"sexual={target_sexual} ({LEVEL_TO_RATING[target_sexual]}), "
+          f"adult={target_sexual} ({LEVEL_TO_RATING[target_sexual]}), "
           f"violence={target_violence} ({LEVEL_TO_RATING[target_violence]})")
     print()
     
@@ -903,7 +922,7 @@ def cmd_rate(bw: BookWashFile, client: GeminiClient,
                 needs_cleaning_count += 1
             
             status = "NEEDS CLEANING" if needs_clean else "OK"
-            print(f"  Rating: L={rating.language} S={rating.sexual} V={rating.violence} -> {status}")
+            print(f"  Rating: L={rating.language} A={rating.sexual} V={rating.violence} -> {status}")
             
         except Exception as e:
             print(f"  Error rating chapter: {e}")
@@ -930,7 +949,7 @@ def cmd_clean(bw: BookWashFile, client: GeminiClient, verbose: bool = False,
     target_sexual = bw.target_sexual
     target_violence = bw.target_violence
     print(f"Target levels: language={target_lang} ({LEVEL_TO_RATING[target_lang]}), "
-          f"sexual={target_sexual} ({LEVEL_TO_RATING[target_sexual]}), "
+          f"adult={target_sexual} ({LEVEL_TO_RATING[target_sexual]}), "
           f"violence={target_violence} ({LEVEL_TO_RATING[target_violence]})")
     if verify:
         print(f"Verification enabled (max {max_iterations} iterations per chapter)")
@@ -997,7 +1016,7 @@ def cmd_clean(bw: BookWashFile, client: GeminiClient, verbose: bool = False,
                 final_rating = client.rate_chapter(text_for_rating)
                 still_exceeds = final_rating.exceeds_target(target_lang, target_sexual, target_violence)
                 
-                print(f"    Post-clean rating: L={final_rating.language} S={final_rating.sexual} V={final_rating.violence}")
+                print(f"    Post-clean rating: L={final_rating.language} A={final_rating.sexual} V={final_rating.violence}")
                 
                 if not still_exceeds:
                     print(f"    ✓ Meets target after {iteration} pass(es)")

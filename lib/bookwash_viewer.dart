@@ -27,7 +27,10 @@ class BookWashViewerApp extends StatelessWidget {
 }
 
 class BookWashViewer extends StatefulWidget {
-  const BookWashViewer({super.key});
+  final String? initialFilePath;
+  final VoidCallback? onExit;
+
+  const BookWashViewer({super.key, this.initialFilePath, this.onExit});
 
   @override
   State<BookWashViewer> createState() => _BookWashViewerState();
@@ -46,6 +49,34 @@ class _BookWashViewerState extends State<BookWashViewer> {
 
   // Text controller for editable cleaned text
   final TextEditingController _cleanedTextController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Load initial file if provided
+    if (widget.initialFilePath != null) {
+      _loadInitialFile();
+    }
+  }
+
+  Future<void> _loadInitialFile() async {
+    if (widget.initialFilePath == null) return;
+
+    try {
+      final bookwash = await BookWashParser.parse(widget.initialFilePath!);
+      setState(() {
+        _bookwashFile = bookwash;
+        _filePath = widget.initialFilePath;
+        _selectedChapterIndex = 0;
+        _currentChangeIndex = 0;
+        _hasUnsavedChanges = false;
+        _rebuildChangesList();
+        _updateCleanedTextController();
+      });
+    } catch (e) {
+      _showError('Failed to load file: $e');
+    }
+  }
 
   // Rebuild the cached changes list
   void _rebuildChangesList() {
@@ -273,6 +304,13 @@ class _BookWashViewerState extends State<BookWashViewer> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: widget.onExit != null
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: widget.onExit,
+                tooltip: 'Back to main screen',
+              )
+            : null,
         title: Row(
           children: [
             const Icon(Icons.auto_stories),
