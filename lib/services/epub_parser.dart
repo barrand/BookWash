@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
@@ -96,16 +97,17 @@ class EpubParser {
     }
 
     // Parse OPF content
-    final opfContent = String.fromCharCodes(opfFile.content as List<int>);
+    final opfContent = _readContent(opfFile);
     final opfDocument = XmlDocument.parse(opfContent);
 
-    // Build manifest map (id -> {href, media-type})
-    final manifestItems = opfDocument
-        .findAllElements('manifest')
-        .first
-        .findElements('item');
+    // Build manifest map (namespace agnostic)
+    final manifestElement = _firstByLocalName(opfDocument, 'manifest');
+    if (manifestElement == null) {
+      throw Exception('OPF manifest element not found');
+    }
     final manifestMap = <String, Map<String, String>>{};
-    for (final item in manifestItems) {
+    for (final item in manifestElement.children.whereType<XmlElement>()) {
+      if (item.name.local != 'item') continue;
       final id = item.getAttribute('id');
       final href = item.getAttribute('href');
       final mediaType = item.getAttribute('media-type');
@@ -125,7 +127,6 @@ class EpubParser {
     final coverMeta = metaItems
         .where((m) => m.getAttribute('name') == 'cover')
         .firstOrNull;
-
     if (coverMeta != null) {
       final coverId = coverMeta.getAttribute('content');
       if (coverId != null && manifestMap.containsKey(coverId)) {
@@ -164,12 +165,13 @@ class EpubParser {
       orElse: () => throw Exception('META-INF/container.xml not found'),
     );
 
-    final containerContent = String.fromCharCodes(
-      containerFile.content as List<int>,
-    );
+    final containerContent = _readContent(containerFile);
     final containerDoc = XmlDocument.parse(containerContent);
 
-    final rootfile = containerDoc.findAllElements('rootfile').first;
+    final rootfile = _firstByLocalName(containerDoc, 'rootfile');
+    if (rootfile == null) {
+      throw Exception('container.xml rootfile element not found');
+    }
     final opfPath = rootfile.getAttribute('full-path');
 
     if (opfPath == null) {
@@ -181,7 +183,10 @@ class EpubParser {
 
   /// Extract metadata from OPF document
   static EpubMetadata _extractMetadata(XmlDocument opfDocument) {
-    final metadataElement = opfDocument.findAllElements('metadata').first;
+    final metadataElement = _firstByLocalName(opfDocument, 'metadata');
+    if (metadataElement == null) {
+      throw Exception('OPF metadata element not found');
+    }
 
     String getMetadataValue(String tagName, {String defaultValue = ''}) {
       try {
@@ -220,7 +225,10 @@ class EpubParser {
     Map<String, ArchiveFile> fileMap,
     Map<String, Map<String, String>> manifestMap,
   ) async {
-    final spine = opfDocument.findAllElements('spine').first;
+    final spine = _firstByLocalName(opfDocument, 'spine');
+    if (spine == null) {
+      throw Exception('OPF spine element not found');
+    }
 
     // Get base path from OPF location
     final basePath = opfPath.contains('/')
@@ -229,7 +237,8 @@ class EpubParser {
 
     // Extract chapters in spine order
     final chapters = <EpubChapter>[];
-    for (final itemref in spine.findElements('itemref')) {
+    for (final itemref in spine.children.whereType<XmlElement>()) {
+      if (itemref.name.local != 'itemref') continue;
       final idref = itemref.getAttribute('idref');
       if (idref == null) continue;
 
@@ -244,12 +253,10 @@ class EpubParser {
       if (chapterFile == null) continue;
 
       // Parse chapter HTML
-      final htmlContent = String.fromCharCodes(
-        chapterFile.content as List<int>,
-      );
+      final htmlContent = _readContent(chapterFile);
       final chapter = _parseChapterHtml(
         id: idref,
-        href: chapterPath,
+        href: href, // Use the relative href here
         htmlContent: htmlContent,
       );
 
@@ -313,9 +320,27 @@ class EpubParser {
     return EpubChapter(
       id: id,
       title: title,
-      href: href,
+      href: href, // This is now the relative path
       paragraphs: paragraphs,
-      rawHtml: htmlContent,
+      rawHtml: document.outerHtml, // Use the parsed and outer HTML
     );
+  }
+
+  /// Reads file content as a UTF-8 string, with error handling.
+  static String _readContent(ArchiveFile file) {
+    if (file.content is List<int>) {
+      // Always decode as UTF-8. The allowMalformed flag prevents errors
+      // on invalid byte sequences by replacing them with a placeholder.
+      return utf8.decode(file.content as List<int>, allowMalformed: true);
+    }
+    return file.content as String;
+  }
+
+  /// Helper: find first element (namespace agnostic) by local name
+  static XmlElement? _firstByLocalName(XmlDocument doc, String local) {
+    for (final e in doc.descendants.whereType<XmlElement>()) {
+      if (e.name.local == local) return e;
+    }
+    return null;
   }
 }

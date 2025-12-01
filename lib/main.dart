@@ -1,12 +1,14 @@
-import 'package:bookwash/models/change_detail.dart';
-import 'package:bookwash/models/categorized_changes.dart';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as path;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'models/bookwash_file.dart';
+import 'services/bookwash_parser.dart';
 import 'services/epub_parser.dart';
 import 'services/epub_writer.dart';
-import 'services/ollama_service.dart';
-import 'services/gemini_service.dart';
 import 'models/chunk_change.dart';
 
 void main() {
@@ -39,47 +41,45 @@ class _BookWashHomeState extends State<BookWashHome> {
   String? selectedFileName;
   ParsedEpub? parsedEpub;
   bool isLoadingFile = false;
-  int profanityLevel = 3;
-  int sexualContentLevel = 3;
-  int violenceLevel = 3;
+  int profanityLevel = 2; // Default: PG language
+  int sexualContentLevel = 2; // Default: PG sexual content
+  int violenceLevel = 5; // Default: Unrated violence (no censorship)
   bool isProcessing = false;
   bool isCancelling = false;
   double progress = 0.0;
+  String progressPhase = ''; // 'converting', 'rating', 'cleaning'
+  int progressCurrent = 0;
+  int progressTotal = 0;
   bool showDetails = false;
 
-  // AI Provider selection
-  String selectedProvider = 'gemini'; // 'ollama' or 'gemini'
-  String geminiApiKey = ''; // User will need to provide this
-
-  // Service instances
-  late OllamaService ollamaService;
-  GeminiService? geminiService;
+  // Gemini API key for Python script
+  String geminiApiKey = '';
 
   // Model selection
-  List<String> availableModels = [];
-  String selectedModel = 'gemini-2.0-flash-exp'; // Default Gemini model
-  bool isLoadingModels = false;
+  String selectedModel = 'gemini-1.5-flash'; // Default Gemini model
+
+  // Bookwash file state
+  String? generatedBookwashPath;
+  BookWashFile? bookwashFile;
+  int selectedReviewChapter = 0;
+  int currentReviewChangeIndex = 0;
 
   // Processing statistics
   int totalParagraphs = 0;
   int processedParagraphs = 0;
   int modifiedParagraphs = 0;
 
-  // Change details
-  List<ChangeDetail> allCategorizedChanges = [];
-
-  // Removal summaries by level
-  Map<String, Map<int, int>> removalCounts = {
-    'profanity': {1: 0, 2: 0, 3: 0, 4: 0},
-    'sexual': {1: 0, 2: 0, 3: 0, 4: 0},
-    'violence': {1: 0, 2: 0, 3: 0, 4: 0},
-  };
-
   List<String> removalDetails = [];
 
   // Real-time logging
   List<String> liveLogMessages = [];
   final _scrollController = ScrollController();
+  bool _autoScrollLog = true; // user-controlled auto-scroll for live log
+
+  // Debug comparisons (per paragraph)
+  // key: unique id "chapterIndex:paragraphIndex"; value: [original, cleaned]
+  final Map<String, List<String>> _paraComparisons = {};
+  final Set<String> _revealedComparisons = {};
 
   // Cleaned book data
   List<String> cleanedParagraphs = [];
@@ -96,9 +96,8 @@ class _BookWashHomeState extends State<BookWashHome> {
   @override
   void initState() {
     super.initState();
-    ollamaService = OllamaService(model: selectedModel);
     _loadSavedApiKey();
-    _loadAvailableModels();
+    _loadSavedLevels();
   }
 
   Future<void> _loadSavedApiKey() async {
@@ -107,7 +106,6 @@ class _BookWashHomeState extends State<BookWashHome> {
     if (savedKey.isNotEmpty) {
       setState(() {
         geminiApiKey = savedKey;
-        geminiService = GeminiService(apiKey: geminiApiKey);
       });
     }
   }
@@ -117,65 +115,18 @@ class _BookWashHomeState extends State<BookWashHome> {
     await prefs.setString('gemini_api_key', key);
   }
 
-  Future<void> _loadAvailableModels() async {
+  Future<void> _loadSavedLevels() async {
+    final prefs = await SharedPreferences.getInstance();
     setState(() {
-      isLoadingModels = true;
+      profanityLevel = prefs.getInt('profanity_level') ?? profanityLevel;
+      sexualContentLevel = prefs.getInt('sexual_level') ?? sexualContentLevel;
+      violenceLevel = prefs.getInt('violence_level') ?? violenceLevel;
     });
-
-    try {
-      List<String> models;
-      if (selectedProvider == 'ollama') {
-        models = await ollamaService.getAvailableModels();
-        if (models.isEmpty) {
-          models = ['qwen3:8b', 'phi3:mini', 'qwen3-coder:30b'];
-        }
-      } else {
-        // Gemini models - Only free tier models
-        models = [
-          'gemini-2.0-flash-exp', // Best free tier: 1500 RPD, 10 RPM
-          'gemini-1.5-flash', // Good free tier: 1500 RPD, 15 RPM
-        ];
-      }
-
-      setState(() {
-        availableModels = models;
-        isLoadingModels = false;
-        // If current model not in list, use first available
-        if (models.isNotEmpty && !models.contains(selectedModel)) {
-          selectedModel = models.first;
-          if (selectedProvider == 'ollama') {
-            ollamaService = OllamaService(model: selectedModel);
-          }
-        }
-      });
-    } catch (e) {
-      print('Failed to load models: $e');
-      setState(() {
-        isLoadingModels = false;
-        // Fallback to default models if fetch fails
-        if (selectedProvider == 'ollama') {
-          availableModels = ['qwen3:8b', 'phi3:mini', 'qwen3-coder:30b'];
-        } else {
-          availableModels = ['gemini-2.0-flash-exp', 'gemini-1.5-flash'];
-        }
-      });
-    }
   }
 
-  void _onModelChanged(String? newModel) {
-    if (newModel != null && newModel != selectedModel) {
-      setState(() {
-        selectedModel = newModel;
-        if (selectedProvider == 'ollama') {
-          ollamaService = OllamaService(model: selectedModel);
-        } else if (geminiService != null) {
-          geminiService = GeminiService(
-            apiKey: geminiApiKey,
-            model: selectedModel,
-          );
-        }
-      });
-    }
+  Future<void> _saveLevel(String key, int value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(key, value);
   }
 
   Future<void> _showGeminiApiKeyDialog() async {
@@ -222,10 +173,7 @@ class _BookWashHomeState extends State<BookWashHome> {
       await _saveApiKey(result); // Save to persistent storage
       setState(() {
         geminiApiKey = result;
-        geminiService = GeminiService(apiKey: geminiApiKey);
-        selectedModel = 'gemini-2.0-flash-exp';
       });
-      await _loadAvailableModels();
     }
   }
 
@@ -402,21 +350,20 @@ class _BookWashHomeState extends State<BookWashHome> {
   }
 
   Future<void> processBook() async {
-    if (parsedEpub == null) {
+    if (selectedFilePath == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select an EPUB file first')),
       );
       return;
     }
 
-    // Check Ollama connection first
-    final isConnected = await ollamaService.checkConnection();
-    if (!isConnected) {
+    // Check if Gemini API key is set
+    if (geminiApiKey.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Cannot connect to Ollama. Please ensure Ollama is running (ollama serve)',
+              'Please set your Gemini API key first (click the key icon in the top right)',
             ),
             duration: Duration(seconds: 5),
             backgroundColor: Colors.red,
@@ -430,113 +377,114 @@ class _BookWashHomeState extends State<BookWashHome> {
       isProcessing = true;
       isCancelling = false;
       progress = 0.0;
-      totalParagraphs = 0;
-      processedParagraphs = 0;
-      modifiedParagraphs = 0;
-      removalCounts = {
-        'profanity': {1: 0, 2: 0, 3: 0, 4: 0},
-        'sexual': {1: 0, 2: 0, 3: 0, 4: 0},
-        'violence': {1: 0, 2: 0, 3: 0, 4: 0},
-      };
-      removalDetails = [];
+      progressPhase = 'converting';
+      progressCurrent = 0;
+      progressTotal = 0;
       liveLogMessages = [];
-      cleanedParagraphs = [];
-      paragraphToChapter = {};
-      cleanedParagraphToChapter = {};
-      pendingChanges = [];
-      currentReviewIndex = 0;
-      allCategorizedChanges = [];
+      generatedBookwashPath = null;
+      bookwashFile = null;
     });
 
     try {
-      print(
-        'Starting book processing with ${selectedProvider == 'gemini' ? 'Gemini' : 'Ollama'}...',
+      // Determine bookwash output path
+      final epubPath = selectedFilePath!;
+      final bookwashPath = epubPath.replaceAll('.epub', '.bookwash');
+
+      _addLogMessage('📚 Starting BookWash processing...');
+      _addLogMessage('📖 Input: ${path.basename(epubPath)}');
+
+      // Step 1: Convert EPUB to .bookwash
+      _addLogMessage('');
+      _addLogMessage('═══════════════════════════════════════════');
+      _addLogMessage('📝 Step 1: Converting EPUB to .bookwash format...');
+      _addLogMessage('═══════════════════════════════════════════');
+
+      final epubToBookwashResult = await _runPythonScript(
+        'scripts/epub_to_bookwash.py',
+        [epubPath, bookwashPath],
       );
 
-      setState(() {
-        totalParagraphs = parsedEpub!.chapters.fold(
-          0,
-          (sum, chapter) => sum + chapter.paragraphs.length,
+      if (epubToBookwashResult != 0) {
+        throw Exception(
+          'Failed to convert EPUB to .bookwash (exit code: $epubToBookwashResult)',
         );
+      }
+
+      _addLogMessage('✅ EPUB converted to .bookwash format');
+
+      setState(() {
+        progress = 0.05; // Small progress for conversion step
+        progressPhase = 'rating';
       });
 
-      print('Total paragraphs to process: $totalParagraphs');
-
-      // Determine chunking strategy based on provider
-      if (selectedProvider == 'gemini') {
-        // Gemini: Process chapter by chapter
-        await _processChapterByChapter();
-      } else {
-        // Ollama: Process paragraph by paragraph (original behavior)
-        // Collect all paragraphs first for Ollama
-        final allParagraphs = <String>[];
-        for (
-          int chapterIdx = 0;
-          chapterIdx < parsedEpub!.chapters.length;
-          chapterIdx++
-        ) {
-          final chapter = parsedEpub!.chapters[chapterIdx];
-          for (final paragraph in chapter.paragraphs) {
-            paragraphToChapter[allParagraphs.length] = chapterIdx;
-            allParagraphs.add(paragraph);
-          }
-        }
-        await _processParagraphByParagraph(allParagraphs);
-      }
-      print('Finished processing - Cancelled: $isCancelling');
-
-      // Debug: Show chapter mapping summary
-      final chapterCounts = <int, int>{};
-      for (final chapterIdx in cleanedParagraphToChapter.values) {
-        chapterCounts[chapterIdx] = (chapterCounts[chapterIdx] ?? 0) + 1;
-      }
-      print('DEBUG: Chapter mapping summary:');
-      for (final entry in chapterCounts.entries) {
-        print('  Chapter ${entry.key}: ${entry.value} paragraphs');
-      }
-      print('DEBUG: Total cleaned paragraphs: ${cleanedParagraphs.length}');
-      print(
-        'DEBUG: Total chapters in original: ${parsedEpub!.chapters.length}',
+      // Step 2: Rate and clean with LLM
+      _addLogMessage('');
+      _addLogMessage('═══════════════════════════════════════════');
+      _addLogMessage('🤖 Step 2: Rating and cleaning content with AI...');
+      _addLogMessage('═══════════════════════════════════════════');
+      _addLogMessage(
+        'Target levels: Language=${_levelToRating(profanityLevel)}, Adult=${_levelToRating(sexualContentLevel)}, Violence=${_levelToRating(violenceLevel)}',
       );
 
-      // Show summary if changes were made
-      if (!isCancelling && allCategorizedChanges.isNotEmpty) {
-        _showSummaryDialog();
+      final llmResult = await _runPythonScript('scripts/bookwash_llm.py', [
+        '--rate',
+        '--clean',
+        bookwashPath,
+        '--api-key',
+        geminiApiKey,
+        '--model',
+        selectedModel,
+        '--language',
+        profanityLevel.toString(),
+        '--sexual',
+        sexualContentLevel.toString(),
+        '--violence',
+        violenceLevel.toString(),
+      ]);
+
+      if (llmResult != 0) {
+        throw Exception('Failed to process with LLM (exit code: $llmResult)');
       }
 
-      // No approval flow - changes already applied during processing
-      // Just show completion message
+      _addLogMessage('✅ Content rated and cleaned');
 
-      // Cleaned paragraphs are already stored in the cleanedParagraphs list
+      setState(() {
+        progress = 1.0;
+        progressPhase = 'complete';
+        generatedBookwashPath = bookwashPath;
+      });
+
+      // Load the bookwash file for review
+      await _loadBookwashFile();
+
+      _addLogMessage('');
+      _addLogMessage('═══════════════════════════════════════════');
+      _addLogMessage('🎉 Processing complete!');
+      _addLogMessage('═══════════════════════════════════════════');
+      _addLogMessage('📄 Output: ${path.basename(bookwashPath)}');
+      _addLogMessage('');
+      _addLogMessage(
+        'Review changes below, then click "Export EPUB" when ready.',
+      );
+
       setState(() {
         isProcessing = false;
-        if (!isCancelling) {
-          progress = 1.0;
-        }
       });
 
       if (mounted) {
-        final message = isCancelling
-            ? 'Processing cancelled: $processedParagraphs/$totalParagraphs paragraphs processed, $modifiedParagraphs modified'
-            : 'Book processed: $processedParagraphs paragraphs filtered, $modifiedParagraphs modified. Ready to save!';
-
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message),
-            duration: const Duration(seconds: 4),
-            backgroundColor: isCancelling ? Colors.orange : null,
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.only(
-              bottom: MediaQuery.of(context).size.height - 100,
-              left: 10,
-              right: 10,
-            ),
+          const SnackBar(
+            content: Text('Processing complete! Review changes below.'),
+            duration: Duration(seconds: 4),
           ),
         );
       }
     } catch (e, stackTrace) {
       print('Error processing book: $e');
       print('Stack trace: $stackTrace');
+
+      _addLogMessage('');
+      _addLogMessage('❌ Error: $e');
 
       setState(() {
         isProcessing = false;
@@ -548,20 +496,224 @@ class _BookWashHomeState extends State<BookWashHome> {
             content: Text('Error processing book: $e'),
             duration: const Duration(seconds: 5),
             backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.only(
-              bottom: MediaQuery.of(context).size.height - 100,
-              left: 10,
-              right: 10,
-            ),
           ),
         );
       }
     }
   }
 
+  String _levelToRating(int level) {
+    switch (level) {
+      case 1:
+        return 'G';
+      case 2:
+        return 'PG';
+      case 3:
+        return 'PG-13';
+      case 4:
+        return 'R';
+      case 5:
+        return 'X';
+      default:
+        return 'PG';
+    }
+  }
+
+  void _addLogMessage(String message) {
+    setState(() {
+      liveLogMessages.add(message);
+    });
+    _scrollToBottom();
+  }
+
+  void _parseProgressFromLine(String line) {
+    // Parse lines like "[1/7] Chapter 1..." to extract progress
+    final chapterMatch = RegExp(r'\[(\d+)/(\d+)\]').firstMatch(line);
+    if (chapterMatch != null) {
+      final current = int.tryParse(chapterMatch.group(1) ?? '0') ?? 0;
+      final total = int.tryParse(chapterMatch.group(2) ?? '0') ?? 0;
+
+      setState(() {
+        progressCurrent = current;
+        progressTotal = total;
+
+        // Calculate progress: 5% for conversion, 45% for rating, 50% for cleaning
+        if (progressPhase == 'rating') {
+          progress = 0.05 + (current / total) * 0.45;
+        } else if (progressPhase == 'cleaning') {
+          progress = 0.50 + (current / total) * 0.50;
+        }
+      });
+    }
+
+    // Detect phase transitions
+    if (line.contains('Rating') && line.contains('chapters...')) {
+      final countMatch = RegExp(r'Rating (\d+) chapters').firstMatch(line);
+      if (countMatch != null) {
+        setState(() {
+          progressPhase = 'rating';
+          progressTotal = int.tryParse(countMatch.group(1) ?? '0') ?? 0;
+          progressCurrent = 0;
+        });
+      }
+    } else if (line.contains('Cleaning') && line.contains('chapters...')) {
+      final countMatch = RegExp(r'Cleaning (\d+) chapters').firstMatch(line);
+      if (countMatch != null) {
+        setState(() {
+          progressPhase = 'cleaning';
+          progressTotal = int.tryParse(countMatch.group(1) ?? '0') ?? 0;
+          progressCurrent = 0;
+          progress = 0.50; // Start cleaning at 50%
+        });
+      }
+    } else if (line.contains('No chapters need cleaning')) {
+      setState(() {
+        progressPhase = 'cleaning';
+        progress = 1.0;
+      });
+    }
+  }
+
+  Future<int> _runPythonScript(String scriptPath, List<String> args) async {
+    final process = await Process.start(
+      'python3',
+      ['-u', scriptPath, ...args], // -u for unbuffered output
+      workingDirectory: path
+          .dirname(Platform.script.toFilePath())
+          .replaceAll('/lib', ''),
+      environment: {'PYTHONUNBUFFERED': '1'}, // Also set env var for subprocess
+    );
+
+    // Stream stdout to log and parse progress
+    process.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) {
+          _addLogMessage(line);
+          _parseProgressFromLine(line);
+        });
+
+    // Stream stderr to log
+    process.stderr
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) {
+          _addLogMessage('⚠️ $line');
+        });
+
+    return await process.exitCode;
+  }
+
+  Future<void> _loadBookwashFile() async {
+    if (generatedBookwashPath == null) return;
+
+    try {
+      final parsed = await BookWashParser.parse(generatedBookwashPath!);
+      setState(() {
+        bookwashFile = parsed;
+        selectedReviewChapter = 0;
+        currentReviewChangeIndex = 0;
+      });
+    } catch (e) {
+      _addLogMessage('❌ Failed to load bookwash file: $e');
+    }
+  }
+
+  // Get all pending changes across all chapters
+  List<MapEntry<int, BookWashChange>> get _allPendingChanges {
+    if (bookwashFile == null) return [];
+    final changes = <MapEntry<int, BookWashChange>>[];
+    for (int i = 0; i < bookwashFile!.chapters.length; i++) {
+      for (final change in bookwashFile!.chapters[i].changes) {
+        if (change.status == 'pending') {
+          changes.add(MapEntry(i, change));
+        }
+      }
+    }
+    return changes;
+  }
+
+  // Get all changes (for stats)
+  List<MapEntry<int, BookWashChange>> get _allChanges {
+    if (bookwashFile == null) return [];
+    final changes = <MapEntry<int, BookWashChange>>[];
+    for (int i = 0; i < bookwashFile!.chapters.length; i++) {
+      for (final change in bookwashFile!.chapters[i].changes) {
+        changes.add(MapEntry(i, change));
+      }
+    }
+    return changes;
+  }
+
+  void _acceptChange(BookWashChange change) {
+    setState(() {
+      change.status = 'accepted';
+    });
+    _moveToNextChange();
+  }
+
+  void _rejectChange(BookWashChange change) {
+    setState(() {
+      change.status = 'rejected';
+    });
+    _moveToNextChange();
+  }
+
+  void _moveToNextChange() {
+    final pending = _allPendingChanges;
+    if (currentReviewChangeIndex < pending.length - 1) {
+      setState(() {
+        currentReviewChangeIndex++;
+        selectedReviewChapter = pending[currentReviewChangeIndex].key;
+      });
+    } else if (pending.isNotEmpty) {
+      setState(() {
+        currentReviewChangeIndex = 0;
+        selectedReviewChapter = pending[0].key;
+      });
+    }
+  }
+
+  Future<void> _saveBookwashFile() async {
+    if (bookwashFile == null || generatedBookwashPath == null) return;
+
+    try {
+      await BookWashParser.write(bookwashFile!, generatedBookwashPath!);
+      _addLogMessage(
+        '💾 Saved changes to ${path.basename(generatedBookwashPath!)}',
+      );
+    } catch (e) {
+      _addLogMessage('❌ Failed to save: $e');
+    }
+  }
+
+  Future<void> _exportToEpub() async {
+    if (generatedBookwashPath == null) return;
+
+    // First save any pending changes
+    await _saveBookwashFile();
+
+    _addLogMessage('');
+    _addLogMessage('📦 Exporting to EPUB...');
+
+    final result = await _runPythonScript('scripts/bookwash_to_epub.py', [
+      generatedBookwashPath!,
+    ]);
+
+    if (result == 0) {
+      final epubPath = generatedBookwashPath!.replaceAll(
+        '.bookwash',
+        '_cleaned.epub',
+      );
+      _addLogMessage('✅ Exported to: ${path.basename(epubPath)}');
+    } else {
+      _addLogMessage('❌ Export failed (exit code: $result)');
+    }
+  }
+
   // Auto-scroll the log to bottom
   void _scrollToBottom() {
+    if (!_autoScrollLog) return; // respect user toggle
     if (_scrollController.hasClients) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scrollController.animateTo(
@@ -573,530 +725,6 @@ class _BookWashHomeState extends State<BookWashHome> {
     }
   }
 
-  // Check if filtering is needed based on current ratings vs desired levels
-  bool _checkIfFilteringNeeded(
-    ChapterRatingResponse ratings,
-    int desiredProfanityLevel,
-    int desiredSexualLevel,
-    int desiredViolenceLevel,
-  ) {
-    // Convert ContentRating enum to numeric level
-    int ratingToLevel(ContentRating rating) {
-      switch (rating) {
-        case ContentRating.G:
-          return 1;
-        case ContentRating.PG:
-          return 2;
-        case ContentRating.PG13:
-          return 3;
-        case ContentRating.R:
-          return 4;
-        case ContentRating.X:
-          return 5;
-      }
-    }
-
-    final currentProfanity = ratingToLevel(ratings.ratings.language);
-    final currentSexual = ratingToLevel(ratings.ratings.sexualContent);
-    final currentViolence = ratingToLevel(ratings.ratings.violence);
-
-    // If any rating is higher than desired, filtering is needed
-    return currentProfanity > desiredProfanityLevel ||
-        currentSexual > desiredSexualLevel ||
-        currentViolence > desiredViolenceLevel;
-  }
-
-  // Process book chapter by chapter (for Gemini)
-  Future<void> _processChapterByChapter() async {
-    const maxParagraphsPerChunk = 100; // Max paragraphs to send in one API call
-
-    for (
-      int chapterIdx = 0;
-      chapterIdx < parsedEpub!.chapters.length;
-      chapterIdx++
-    ) {
-      if (isCancelling) break;
-
-      final chapter = parsedEpub!.chapters[chapterIdx];
-      final chapterParagraphs = chapter.paragraphs;
-
-      print(
-        'Processing Chapter ${chapterIdx + 1}/${parsedEpub!.chapters.length}: "${chapter.title}" (${chapterParagraphs.length} paragraphs)...',
-      );
-
-      try {
-        if (geminiService == null) {
-          throw Exception('Gemini service not initialized.');
-        }
-
-        // FIRST PASS: Rate the chapter for content
-        final chapterText = chapterParagraphs.join('\n\n');
-        print('  Rating Chapter ${chapterIdx + 1} for content...');
-        final ratings = await geminiService!.rateChapter(
-          text: chapterText,
-          onRateLimit: (delay) {
-            setState(() {
-              liveLogMessages.add(
-                '⏸️ Rate limited. Waiting ${delay.inSeconds}s...',
-              );
-              _scrollToBottom();
-            });
-          },
-        );
-
-        setState(() {
-          liveLogMessages.add(
-            '📊 Chapter ${chapterIdx + 1}: Rated language-${ratings.ratings.language.name.toUpperCase()}, sexual-${ratings.ratings.sexualContent.name.toUpperCase()}, violence-${ratings.ratings.violence.name.toUpperCase()}',
-          );
-        });
-        _scrollToBottom();
-
-        // Check if filtering is needed based on ratings vs desired levels
-        final needsFiltering = _checkIfFilteringNeeded(
-          ratings,
-          profanityLevel,
-          sexualContentLevel,
-          violenceLevel,
-        );
-
-        if (needsFiltering) {
-          setState(() {
-            liveLogMessages.add(
-              '🔧 Chapter ${chapterIdx + 1}: Filtering required',
-            );
-          });
-          _scrollToBottom();
-        } else {
-          setState(() {
-            liveLogMessages.add(
-              '✓ Chapter ${chapterIdx + 1}: No filtering needed',
-            );
-          });
-          _scrollToBottom();
-          // Add original content without filtering
-          for (final para in chapterParagraphs) {
-            cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
-            cleanedParagraphs.add(para);
-          }
-          setState(() {
-            processedParagraphs += chapterParagraphs.length;
-            progress = processedParagraphs / totalParagraphs;
-          });
-          continue;
-        }
-
-        // If chapter is small enough, send as one chunk
-        if (chapterParagraphs.length <= maxParagraphsPerChunk) {
-          final response = await geminiService!.filterParagraph(
-            paragraph: chapterText,
-            profanityLevel: profanityLevel,
-            sexualContentLevel: sexualContentLevel,
-            violenceLevel: violenceLevel,
-            chapterIndex: chapterIdx,
-            onRateLimit: (delay) {
-              setState(() {
-                liveLogMessages.add(
-                  '⏸️ Rate limited. Waiting ${delay.inSeconds}s...',
-                );
-                _scrollToBottom();
-              });
-            },
-          );
-
-          // Split cleaned text back into paragraphs
-          final cleanedChapterParagraphs = response.cleanedText
-              .split('\n\n')
-              .where((p) => p.trim().isNotEmpty)
-              .toList();
-
-          // Add all cleaned paragraphs to this chapter
-          for (final para in cleanedChapterParagraphs) {
-            cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
-            cleanedParagraphs.add(para);
-          }
-
-          if (response.wasModified) {
-            setState(() {
-              modifiedParagraphs += chapterParagraphs.length;
-              allCategorizedChanges.addAll(
-                response.categorizedChanges.profanity,
-              );
-              allCategorizedChanges.addAll(response.categorizedChanges.sexual);
-              allCategorizedChanges.addAll(
-                response.categorizedChanges.violence,
-              );
-              final changesToLog = response.detectedChanges
-                  .take(3)
-                  .map((change) {
-                    final parts = change.split(' ');
-                    if (parts.isNotEmpty) {
-                      final word = parts[0];
-                      // Re-add the rest of the change description, e.g., "(removed/changed)"
-                      final rest = parts.skip(1).join(' ');
-                      return '${_obfuscateWord(word)} $rest';
-                    }
-                    return change;
-                  })
-                  .join(', ');
-
-              final logEntry =
-                  '• Chapter ${chapterIdx + 1}: "${chapter.title}" - $changesToLog';
-              liveLogMessages.add(logEntry);
-            });
-          }
-          _scrollToBottom();
-
-          setState(() {
-            processedParagraphs += chapterParagraphs.length;
-            progress = processedParagraphs / totalParagraphs;
-          });
-        } else {
-          // Chapter is too large, split into smaller chunks
-          print(
-            '  Chapter is large (${chapterParagraphs.length} paragraphs), splitting into chunks...',
-          );
-
-          for (
-            int i = 0;
-            i < chapterParagraphs.length;
-            i += maxParagraphsPerChunk
-          ) {
-            if (isCancelling) break;
-
-            final end = (i + maxParagraphsPerChunk).clamp(
-              0,
-              chapterParagraphs.length,
-            );
-            final chunkParagraphs = chapterParagraphs.sublist(i, end);
-            final chunkText = chunkParagraphs.join('\n\n');
-
-            print(
-              '  Processing chunk ${i ~/ maxParagraphsPerChunk + 1} (paragraphs ${i + 1}-$end)...',
-            );
-
-            final response = await geminiService!.filterParagraph(
-              paragraph: chunkText,
-              profanityLevel: profanityLevel,
-              sexualContentLevel: sexualContentLevel,
-              violenceLevel: violenceLevel,
-              chapterIndex: chapterIdx,
-              onRateLimit: (delay) {
-                setState(() {
-                  liveLogMessages.add(
-                    '⏸️ Rate limited. Waiting ${delay.inSeconds}s...',
-                  );
-                  _scrollToBottom();
-                });
-              },
-            );
-
-            // Split cleaned text back into paragraphs
-            final cleanedChunkParagraphs = response.cleanedText
-                .split('\n\n')
-                .where((p) => p.trim().isNotEmpty)
-                .toList();
-
-            // Add all cleaned paragraphs to this chapter
-            for (final para in cleanedChunkParagraphs) {
-              cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
-              cleanedParagraphs.add(para);
-            }
-
-            if (response.wasModified) {
-              setState(() {
-                modifiedParagraphs += chunkParagraphs.length;
-                allCategorizedChanges.addAll(
-                  response.categorizedChanges.profanity,
-                );
-                allCategorizedChanges.addAll(
-                  response.categorizedChanges.sexual,
-                );
-                allCategorizedChanges.addAll(
-                  response.categorizedChanges.violence,
-                );
-              });
-            }
-
-            setState(() {
-              processedParagraphs += chunkParagraphs.length;
-              progress = processedParagraphs / totalParagraphs;
-            });
-          }
-
-          // Log once for the whole chapter
-          setState(() {
-            final logEntry =
-                '• Chapter ${chapterIdx + 1}: "${chapter.title}" - Processed in multiple chunks';
-            liveLogMessages.add(logEntry);
-          });
-        }
-      } catch (e) {
-        print('Error processing chapter $chapterIdx: $e');
-        // Keep original paragraphs if filtering fails
-        for (final para in chapterParagraphs) {
-          cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
-          cleanedParagraphs.add(para);
-        }
-
-        setState(() {
-          liveLogMessages.add(
-            '⚠️ Error in Chapter ${chapterIdx + 1}: Using original content',
-          );
-          processedParagraphs += chapterParagraphs.length;
-          progress = processedParagraphs / totalParagraphs;
-        });
-      }
-    }
-  }
-
-  // Process book paragraph by paragraph (for Ollama)
-  Future<void> _processParagraphByParagraph(List<String> allParagraphs) async {
-    for (int i = 0; i < allParagraphs.length; i++) {
-      // Check for cancellation
-      if (isCancelling) {
-        print('Processing cancelled by user');
-        break;
-      }
-
-      final paragraph = allParagraphs[i];
-      final chapterIdx = paragraphToChapter[i]!;
-
-      // Skip very short paragraphs (likely formatting elements)
-      if (paragraph.trim().length < 10) {
-        cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
-        cleanedParagraphs.add(paragraph);
-        setState(() {
-          processedParagraphs++;
-          progress = (i + 1) / allParagraphs.length;
-        });
-        continue;
-      }
-
-      print('Processing paragraph ${i + 1}/${allParagraphs.length}...');
-
-      try {
-        // Filter the paragraph through Ollama
-        final response = await ollamaService.filterParagraph(
-          paragraph: paragraph,
-          profanityLevel: profanityLevel,
-          sexualContentLevel: sexualContentLevel,
-          violenceLevel: violenceLevel,
-        );
-
-        cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
-        cleanedParagraphs.add(response.cleanedText);
-
-        // Track if content was changed
-        if (response.wasModified) {
-          setState(() {
-            modifiedParagraphs++;
-
-            // Add detailed log message
-            if (response.removedWords.isNotEmpty) {
-              final logMessage = _createLogMessage(
-                i + 1,
-                response.removedWords,
-              );
-              liveLogMessages.add(logMessage);
-
-              // Auto-scroll to bottom
-              if (_scrollController.hasClients) {
-                _scrollController.animateTo(
-                  _scrollController.position.maxScrollExtent,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOut,
-                );
-              }
-            } else {
-              liveLogMessages.add('Paragraph ${i + 1}: Content modified');
-            }
-          });
-          removalDetails.add(
-            'Modified paragraph ${i + 1} (Chapter ${paragraphToChapter[i]! + 1})',
-          );
-        }
-      } catch (e) {
-        print('Error processing paragraph $i: $e');
-        // Keep original paragraph if filtering fails
-        cleanedParagraphToChapter[cleanedParagraphs.length] = chapterIdx;
-        cleanedParagraphs.add(paragraph);
-      }
-
-      // Update progress
-      setState(() {
-        processedParagraphs++;
-        progress = (i + 1) / allParagraphs.length;
-      });
-
-      // Finish processing message
-      setState(() {
-        isProcessing = false;
-        progress = 1.0;
-        liveLogMessages.add(
-          '✅ Book processed: ${cleanedParagraphs.length} paragraphs total',
-        );
-        if (modifiedParagraphs > 0) {
-          liveLogMessages.add(
-            '📊 Summary: $modifiedParagraphs paragraphs modified',
-          );
-        }
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              modifiedParagraphs > 0
-                  ? 'Book processed: $modifiedParagraphs changes made. Ready to save.'
-                  : 'Book processed: No changes needed. Ready to save.',
-            ),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  void _showSummaryDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Processing Summary'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: _buildSummaryContent(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildSummaryContent() {
-    final profanityChanges = allCategorizedChanges
-        .where((c) => c.category == 'profanity')
-        .toList();
-    final sexualChanges = allCategorizedChanges
-        .where((c) => c.category == 'sexual')
-        .toList();
-    final violenceChanges = allCategorizedChanges
-        .where((c) => c.category == 'violence')
-        .toList();
-
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (profanityChanges.isNotEmpty)
-            _buildSummaryCategory(
-              'Profanity Changes',
-              profanityChanges,
-              Icons.volume_off,
-              Colors.orange,
-            ),
-          if (sexualChanges.isNotEmpty)
-            _buildSummaryCategory(
-              'Sexual Content Changes',
-              sexualChanges,
-              Icons.favorite_border,
-              Colors.pink,
-            ),
-          if (violenceChanges.isNotEmpty)
-            _buildSummaryCategory(
-              'Violence Changes',
-              violenceChanges,
-              Icons.shield_outlined,
-              Colors.red,
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSummaryCategory(
-    String title,
-    List<ChangeDetail> changes,
-    IconData icon,
-    Color color,
-  ) {
-    // Group by original word
-    final groupedByWord = <String, List<ChangeDetail>>{};
-    for (final change in changes) {
-      (groupedByWord[change.originalWord] ??= []).add(change);
-    }
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: color),
-                const SizedBox(width: 8),
-                Text(
-                  '$title (${changes.length} total)',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
-                ),
-              ],
-            ),
-            const Divider(height: 16),
-            ...groupedByWord.entries.map((entry) {
-              final word = entry.key;
-              final wordChanges = entry.value;
-              final obfuscated = wordChanges.first.obfuscatedWord;
-              final count = wordChanges.length;
-
-              // Group by chapter
-              final chapters = wordChanges
-                  .map((c) => c.chapterIndex + 1)
-                  .toSet()
-                  .toList();
-              chapters.sort();
-              final chapterText = chapters.length > 1 ? 'Chapters' : 'Chapter';
-              final chapterList = chapters.join(', ');
-
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4.0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$obfuscated ($count):',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '$chapterText $chapterList',
-                        style: TextStyle(color: Colors.grey[400]),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }).toList(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Note: _applyApprovedChanges removed - changes now applied immediately during processing
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1104,6 +732,19 @@ class _BookWashHomeState extends State<BookWashHome> {
         title: const Text('BookWash - EPUB Content Cleaner'),
         centerTitle: true,
         elevation: 0,
+        actions: [
+          // Gemini API Key button
+          IconButton(
+            icon: Icon(
+              geminiApiKey.isEmpty ? Icons.key_off : Icons.key,
+              color: geminiApiKey.isEmpty ? Colors.red : Colors.green,
+            ),
+            tooltip: geminiApiKey.isEmpty
+                ? 'Set Gemini API Key'
+                : 'API Key Set',
+            onPressed: _showGeminiApiKeyDialog,
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20.0),
@@ -1233,102 +874,14 @@ class _BookWashHomeState extends State<BookWashHome> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    // AI Provider Selector
-                    Row(
-                      children: [
-                        const Text(
-                          'AI Provider:',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: DropdownButton<String>(
-                            value: selectedProvider,
-                            isExpanded: true,
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'ollama',
-                                child: Text('Ollama (Local)'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'gemini',
-                                child: Text('Google Gemini (Cloud)'),
-                              ),
-                            ],
-                            onChanged: isProcessing
-                                ? null
-                                : (String? newProvider) {
-                                    if (newProvider != null) {
-                                      setState(() {
-                                        selectedProvider = newProvider;
-                                        if (newProvider == 'gemini') {
-                                          _showGeminiApiKeyDialog();
-                                        } else {
-                                          _loadAvailableModels();
-                                        }
-                                      });
-                                    }
-                                  },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    // Model Selector
-                    Row(
-                      children: [
-                        const Text(
-                          'AI Model:',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: isLoadingModels
-                              ? const Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'Loading models...',
-                                      style: TextStyle(fontSize: 12),
-                                    ),
-                                  ],
-                                )
-                              : DropdownButton<String>(
-                                  value: selectedModel,
-                                  isExpanded: true,
-                                  items: availableModels
-                                      .map(
-                                        (model) => DropdownMenuItem(
-                                          value: model,
-                                          child: Text(model),
-                                        ),
-                                      )
-                                      .toList(),
-                                  onChanged: isProcessing
-                                      ? null
-                                      : _onModelChanged,
-                                ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
                     _buildSliderSection(
                       'Language',
                       profanityLevel,
-                      (value) => setState(() => profanityLevel = value.toInt()),
+                      (value) {
+                        final v = value.toInt();
+                        setState(() => profanityLevel = v);
+                        _saveLevel('profanity_level', v);
+                      },
                       [
                         '1 - G Rated: No profanity or crude language (Most censorship)',
                         '2 - PG Rated: Mild language allowed (Heavy censorship)',
@@ -1339,12 +892,15 @@ class _BookWashHomeState extends State<BookWashHome> {
                     ),
                     const SizedBox(height: 16),
                     _buildSliderSection(
-                      'Sexual Content',
+                      'Adult Content',
                       sexualContentLevel,
-                      (value) =>
-                          setState(() => sexualContentLevel = value.toInt()),
+                      (value) {
+                        final v = value.toInt();
+                        setState(() => sexualContentLevel = v);
+                        _saveLevel('sexual_level', v);
+                      },
                       [
-                        '1 - G Rated: No sexual content allowed (Most censorship)',
+                        '1 - G Rated: No adult content allowed (Most censorship)',
                         '2 - PG Rated: Light romance only (Heavy censorship)',
                         '3 - PG-13 Rated: Romantic scenes allowed (Light censorship)',
                         '4 - R Rated: Suggestive content allowed (Censorship of X rated content only)',
@@ -1355,7 +911,11 @@ class _BookWashHomeState extends State<BookWashHome> {
                     _buildSliderSection(
                       'Violence',
                       violenceLevel,
-                      (value) => setState(() => violenceLevel = value.toInt()),
+                      (value) {
+                        final v = value.toInt();
+                        setState(() => violenceLevel = v);
+                        _saveLevel('violence_level', v);
+                      },
                       [
                         '1 - G Rated: No violence (Most censorship)',
                         '2 - PG Rated: Mild conflict only (Heavy censorship)',
@@ -1418,6 +978,7 @@ class _BookWashHomeState extends State<BookWashHome> {
                   ),
                 ],
               ),
+
             const SizedBox(height: 20),
 
             // Progress Section
@@ -1438,59 +999,121 @@ class _BookWashHomeState extends State<BookWashHome> {
                       const SizedBox(height: 12),
                       LinearProgressIndicator(value: progress, minHeight: 8),
                       const SizedBox(height: 8),
-                      Text(
-                        '${(progress * 100).toStringAsFixed(0)}% Complete',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      // Real-time statistics
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: Colors.blue.withOpacity(0.3),
+                      Row(
+                        children: [
+                          Text(
+                            '${(progress * 100).toStringAsFixed(0)}% Complete',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey,
+                            ),
                           ),
-                        ),
-                        child: Column(
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceAround,
-                              children: [
-                                _buildStatItem(
-                                  'Processed',
-                                  '$processedParagraphs / $totalParagraphs',
-                                  Icons.article,
-                                ),
-                                _buildStatItem(
-                                  'Modified',
-                                  '$modifiedParagraphs',
-                                  Icons.edit,
-                                  color: modifiedParagraphs > 0
+                          const SizedBox(width: 16),
+                          if (progressPhase.isNotEmpty &&
+                              progressPhase != 'complete')
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: progressPhase == 'rating'
+                                    ? Colors.blue.withOpacity(0.2)
+                                    : progressPhase == 'cleaning'
+                                    ? Colors.orange.withOpacity(0.2)
+                                    : Colors.grey.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                progressPhase == 'converting'
+                                    ? '📝 Converting...'
+                                    : progressPhase == 'rating'
+                                    ? '📊 Rating${progressTotal > 0 ? ' $progressCurrent/$progressTotal chapters' : '...'}'
+                                    : progressPhase == 'cleaning'
+                                    ? '🧹 Cleaning${progressTotal > 0 ? ' $progressCurrent/$progressTotal chapters' : '...'}'
+                                    : progressPhase,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: progressPhase == 'rating'
+                                      ? Colors.blue
+                                      : progressPhase == 'cleaning'
                                       ? Colors.orange
                                       : Colors.grey,
                                 ),
-                              ],
+                              ),
                             ),
-                          ],
-                        ),
+                        ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
                       // Live logging display
                       if (liveLogMessages.isNotEmpty)
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Live Processing Log:',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: const Text(
+                                    'Live Processing Log:',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    const Text(
+                                      'Auto-scroll',
+                                      style: TextStyle(fontSize: 12),
+                                    ),
+                                    Switch(
+                                      value: _autoScrollLog,
+                                      onChanged: (val) {
+                                        setState(() {
+                                          _autoScrollLog = val;
+                                        });
+                                        if (val) {
+                                          // If re-enabled, jump immediately
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                                if (_scrollController
+                                                    .hasClients) {
+                                                  _scrollController.jumpTo(
+                                                    _scrollController
+                                                        .position
+                                                        .maxScrollExtent,
+                                                  );
+                                                }
+                                              });
+                                        }
+                                      },
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        if (_scrollController.hasClients) {
+                                          _scrollController.animateTo(
+                                            _scrollController
+                                                .position
+                                                .maxScrollExtent,
+                                            duration: const Duration(
+                                              milliseconds: 250,
+                                            ),
+                                            curve: Curves.easeOut,
+                                          );
+                                        }
+                                      },
+                                      child: const Text(
+                                        'Jump to bottom',
+                                        style: TextStyle(fontSize: 12),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 8),
                             Container(
@@ -1507,17 +1130,152 @@ class _BookWashHomeState extends State<BookWashHome> {
                                 controller: _scrollController,
                                 itemCount: liveLogMessages.length,
                                 itemBuilder: (context, index) {
+                                  final log = liveLogMessages[index];
+                                  int? chapterForLog;
+                                  int? paraForLog;
+                                  final chMatch = RegExp(
+                                    r'Chapter\s+(\d+)',
+                                  ).firstMatch(log);
+                                  if (chMatch != null) {
+                                    chapterForLog = int.tryParse(
+                                      chMatch.group(1)!,
+                                    );
+                                  }
+                                  final paraMatch = RegExp(
+                                    r'paragraph\s+(\d+)',
+                                  ).firstMatch(log.toLowerCase());
+                                  if (paraMatch != null) {
+                                    paraForLog = int.tryParse(
+                                      paraMatch.group(1)!,
+                                    );
+                                  }
+                                  String? key;
+                                  if (chapterForLog != null &&
+                                      paraForLog != null) {
+                                    key =
+                                        '${chapterForLog - 1}:${paraForLog - 1}';
+                                  }
+                                  final hasComparison =
+                                      key != null &&
+                                      _paraComparisons.containsKey(key);
+
                                   return Padding(
                                     padding: const EdgeInsets.symmetric(
-                                      vertical: 2,
+                                      vertical: 4,
                                     ),
-                                    child: Text(
-                                      liveLogMessages[index],
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        fontFamily: 'monospace',
-                                        color: Colors.orange,
-                                      ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          log,
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            fontFamily: 'monospace',
+                                            color: Colors.orange,
+                                          ),
+                                        ),
+                                        if (hasComparison)
+                                          Row(
+                                            children: [
+                                              TextButton(
+                                                onPressed: () {
+                                                  setState(() {
+                                                    if (key == null) return;
+                                                    if (_revealedComparisons
+                                                        .contains(key)) {
+                                                      _revealedComparisons
+                                                          .remove(key);
+                                                    } else {
+                                                      _revealedComparisons.add(
+                                                        key,
+                                                      );
+                                                    }
+                                                  });
+                                                },
+                                                child: Text(
+                                                  _revealedComparisons.contains(
+                                                        key,
+                                                      )
+                                                      ? 'Hide original content'
+                                                      : 'Reveal original content',
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        if (hasComparison &&
+                                            _revealedComparisons.contains(key))
+                                          Container(
+                                            margin: const EdgeInsets.only(
+                                              top: 6,
+                                            ),
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withOpacity(
+                                                0.2,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                              border: Border.all(
+                                                color: Colors.orange
+                                                    .withOpacity(0.3),
+                                              ),
+                                            ),
+                                            child: Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      const Text(
+                                                        'Original',
+                                                        style: TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 4),
+                                                      Text(
+                                                        _paraComparisons[key]![0],
+                                                        style: const TextStyle(
+                                                          fontSize: 11,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      const Text(
+                                                        'Cleaned',
+                                                        style: TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 4),
+                                                      Text(
+                                                        _paraComparisons[key]![1],
+                                                        style: const TextStyle(
+                                                          fontSize: 11,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   );
                                 },
@@ -1531,140 +1289,300 @@ class _BookWashHomeState extends State<BookWashHome> {
                 ),
               ),
 
-            // Save Edited Book Button (always visible, disabled until processing completes)
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: cleanedParagraphs.isNotEmpty ? saveCleanedBook : null,
-              icon: const Icon(Icons.save),
-              label: const Text('Save Edited Book'),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                backgroundColor: cleanedParagraphs.isNotEmpty
-                    ? Colors.green
-                    : null,
+            // Review Changes Section - shows after processing with bookwash file
+            if (bookwashFile != null && !isProcessing)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.rate_review, size: 24),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Step 4: Review Changes',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          // Stats
+                          _buildReviewStatChip(
+                            'Pending',
+                            _allPendingChanges.length,
+                            Colors.orange,
+                          ),
+                          const SizedBox(width: 8),
+                          _buildReviewStatChip(
+                            'Accepted',
+                            _allChanges
+                                .where((c) => c.value.status == 'accepted')
+                                .length,
+                            Colors.green,
+                          ),
+                          const SizedBox(width: 8),
+                          _buildReviewStatChip(
+                            'Rejected',
+                            _allChanges
+                                .where((c) => c.value.status == 'rejected')
+                                .length,
+                            Colors.red,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Chapter selector and change review
+                      if (_allPendingChanges.isNotEmpty) ...[
+                        // Current change display
+                        _buildCurrentChangeReview(),
+                        const SizedBox(height: 16),
+                        // Navigation and action buttons
+                        Row(
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: currentReviewChangeIndex > 0
+                                  ? () {
+                                      setState(() {
+                                        currentReviewChangeIndex--;
+                                        selectedReviewChapter =
+                                            _allPendingChanges[currentReviewChangeIndex]
+                                                .key;
+                                      });
+                                    }
+                                  : null,
+                              icon: const Icon(Icons.arrow_back),
+                              label: const Text('Previous'),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '${currentReviewChangeIndex + 1} / ${_allPendingChanges.length}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed:
+                                  currentReviewChangeIndex <
+                                      _allPendingChanges.length - 1
+                                  ? () {
+                                      setState(() {
+                                        currentReviewChangeIndex++;
+                                        selectedReviewChapter =
+                                            _allPendingChanges[currentReviewChangeIndex]
+                                                .key;
+                                      });
+                                    }
+                                  : null,
+                              icon: const Icon(Icons.arrow_forward),
+                              label: const Text('Next'),
+                            ),
+                            const Spacer(),
+                            ElevatedButton.icon(
+                              onPressed: () => _rejectChange(
+                                _allPendingChanges[currentReviewChangeIndex]
+                                    .value,
+                              ),
+                              icon: const Icon(Icons.close),
+                              label: const Text('Reject'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed: () => _acceptChange(
+                                _allPendingChanges[currentReviewChangeIndex]
+                                    .value,
+                              ),
+                              icon: const Icon(Icons.check),
+                              label: const Text('Accept'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24.0),
+                            child: Column(
+                              children: [
+                                Icon(
+                                  Icons.check_circle,
+                                  size: 48,
+                                  color: Colors.green,
+                                ),
+                                SizedBox(height: 8),
+                                Text(
+                                  'All changes reviewed!',
+                                  style: TextStyle(fontSize: 16),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
-            ),
+
+            // Export EPUB Button - shows after processing
+            if (bookwashFile != null && !isProcessing) ...[
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: _exportToEpub,
+                icon: const Icon(Icons.download),
+                label: const Text('Export EPUB'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor: Colors.teal,
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  /// Obfuscate a word by replacing middle characters with asterisks
-  String _obfuscateWord(String word) {
-    if (word.length <= 2) {
-      return '*' * word.length;
-    } else if (word.length == 3) {
-      return '${word[0]}*${word[2]}';
-    } else {
-      final asterisks = '*' * (word.length - 2);
-      return '${word[0]}$asterisks${word[word.length - 1]}';
-    }
-  }
-
-  /// Create log message for removed words
-  String _createLogMessage(int paragraphNum, List<String> removedWords) {
-    // Categorize words
-    final profanityWords = <String>[];
-    final sexualWords = <String>[];
-    final violenceWords = <String>[];
-
-    // Common profanity keywords
-    const profanityKeywords = [
-      'damn',
-      'shit',
-      'bullshit',
-      'crap',
-      'hell',
-      'ass',
-      'asshole',
-      'bitch',
-      'fuck',
-      'fucking',
-      'fucked',
-      'motherfucker',
-      'bastard',
-    ];
-
-    // Sexual content keywords
-    const sexualKeywords = [
-      'cleavage',
-      'neckline',
-      'sexy',
-      'passionate',
-      'kiss',
-      'kissing',
-    ];
-
-    // Violence keywords
-    const violenceKeywords = [
-      'punch',
-      'hit',
-      'fight',
-      'blood',
-      'kill',
-      'violence',
-      'weapon',
-    ];
-
-    for (final word in removedWords) {
-      final lowerWord = word.toLowerCase();
-      if (profanityKeywords.contains(lowerWord)) {
-        profanityWords.add(word);
-      } else if (sexualKeywords.contains(lowerWord)) {
-        sexualWords.add(word);
-      } else if (violenceKeywords.contains(lowerWord)) {
-        violenceWords.add(word);
-      }
-    }
-
-    final parts = <String>[];
-
-    // Add profanity with obfuscation
-    if (profanityWords.isNotEmpty) {
-      final obfuscated = profanityWords.map(_obfuscateWord).join(', ');
-      parts.add('profanity ($obfuscated)');
-    }
-
-    // Add sexual content with obfuscation
-    if (sexualWords.isNotEmpty) {
-      final obfuscated = sexualWords.map(_obfuscateWord).join(', ');
-      parts.add('sexual ($obfuscated)');
-    }
-
-    // Add violence with obfuscation
-    if (violenceWords.isNotEmpty) {
-      final obfuscated = violenceWords.map(_obfuscateWord).join(', ');
-      parts.add('violence ($obfuscated)');
-    }
-
-    if (parts.isEmpty) {
-      return 'Paragraph $paragraphNum: Content modified';
-    }
-
-    return 'Paragraph $paragraphNum: Removed ${parts.join(', ')}';
-  }
-
-  Widget _buildStatItem(
-    String label,
-    String value,
-    IconData icon, {
-    Color? color,
-  }) {
-    return Column(
-      children: [
-        Icon(icon, size: 32, color: color ?? Colors.blue),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: color ?? Colors.blue,
-          ),
+  Widget _buildReviewStatChip(String label, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        '$label: $count',
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
         ),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-      ],
+      ),
+    );
+  }
+
+  Widget _buildCurrentChangeReview() {
+    if (_allPendingChanges.isEmpty ||
+        currentReviewChangeIndex >= _allPendingChanges.length) {
+      return const SizedBox.shrink();
+    }
+
+    final entry = _allPendingChanges[currentReviewChangeIndex];
+    final chapterIndex = entry.key;
+    final change = entry.value;
+    final chapter = bookwashFile!.chapters[chapterIndex];
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade700),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Chapter header
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade800,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(7),
+                topRight: Radius.circular(7),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.book, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  'Chapter ${chapterIndex + 1}: ${chapter.title}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '(Change ${change.id})',
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          // Side-by-side comparison
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Original
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.1),
+                      border: Border.all(color: Colors.red.withOpacity(0.3)),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Original',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          change.original,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Cleaned
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.1),
+                      border: Border.all(color: Colors.green.withOpacity(0.3)),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Cleaned',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          change.cleaned,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

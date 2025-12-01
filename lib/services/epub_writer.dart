@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as path;
+import 'package:xml/xml.dart';
 import 'epub_parser.dart';
 
 /// Service for writing EPUB files
@@ -95,28 +96,119 @@ class EpubWriter {
       final chapter = originalEpub.chapters[i];
       final paragraphs = chapterParagraphs[i] ?? [];
 
-      final chapterHtml = _generateChapterHtml(chapter.title, paragraphs);
-      final file = File(path.join(tempDir.path, 'OEBPS', 'chapter_$i.html'));
-      await file.writeAsString(chapterHtml);
+      final chapterHtml = _generateChapterHtml(
+        originalIndex: i,
+        title: chapter.title,
+        paragraphs: paragraphs,
+        originalHtml: chapter.rawHtml,
+      );
+
+      // Validate the generated XHTML
+      _validateXhtml(chapterHtml, chapter.href);
+
+      final file = File(path.join(tempDir.path, 'OEBPS', chapter.href));
+      await file.writeAsString(chapterHtml, flush: true);
     }
   }
 
-  String _generateChapterHtml(String title, List<String> paragraphs) {
-    final escapedTitle = _escapeXml(title);
-    final paragraphsHtml = paragraphs
-        .map((p) => '    <p>${_escapeXml(p)}</p>')
-        .join('\n');
+  String _generateChapterHtml({
+    required int originalIndex,
+    required String title,
+    required List<String> paragraphs,
+    required String originalHtml,
+  }) {
+    try {
+      // Convert HTML5-style self-closing tags to XHTML format
+      final xhtmlContent = _normalizeToXhtml(originalHtml);
 
-    return '''<?xml version='1.0' encoding='utf-8'?>
+      // Parse as XML (XHTML is XML-compliant)
+      final document = XmlDocument.parse(xhtmlContent);
+
+      // Find the body element
+      final bodyElement = document.findAllElements('body').firstOrNull;
+
+      if (bodyElement != null) {
+        final rawTitle = _buildDisplayTitle(originalIndex, title);
+        final h1 = XmlElement(XmlName('h1'))..children.add(XmlText(rawTitle));
+
+        if (paragraphs.isEmpty) {
+          // Keep original body content, just prepend the standardized chapter heading
+          bodyElement.children.insert(0, h1);
+          return document.toXmlString(pretty: false);
+        }
+
+        // Replace body content with heading + cleaned paragraphs
+        bodyElement.children.clear();
+        bodyElement.children.add(h1);
+        for (final paragraphText in paragraphs) {
+          final pElement = XmlElement(XmlName('p'));
+          pElement.children.add(XmlText(paragraphText));
+          bodyElement.children.add(pElement);
+        }
+        return document.toXmlString(pretty: false);
+      }
+
+      // If no body found, fall back to creating basic structure
+      final escapedTitle = _escapeXml(_buildDisplayTitle(originalIndex, title));
+      final paragraphsHtml = paragraphs.isEmpty
+          ? ''
+          : paragraphs.map((p) => '    <p>${_escapeXml(p)}</p>').join('\n');
+
+      return '''<?xml version='1.0' encoding='utf-8'?>
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <title>$escapedTitle</title>
   </head>
   <body>
     <h1>$escapedTitle</h1>
-$paragraphsHtml
+${paragraphsHtml}
   </body>
 </html>''';
+    } catch (e) {
+      // If XML parsing fails, fall back to the regex method
+      print('XML parsing failed, falling back to regex replacement. Error: $e');
+      final paragraphsHtml = paragraphs.isEmpty
+          ? ''
+          : paragraphs.map((p) => '    <p>${_escapeXml(p)}</p>').join('\n');
+
+      final bodyRegex = RegExp(
+        r'<body[^>]*>([\s\S]*)</body>',
+        caseSensitive: false,
+        dotAll: true,
+      );
+
+      if (bodyRegex.hasMatch(originalHtml)) {
+        return originalHtml.replaceFirstMapped(bodyRegex, (match) {
+          return '<body>\n$paragraphsHtml\n</body>';
+        });
+      }
+
+      // Fallback if body tag is not found
+      final escapedTitle = _escapeXml(_buildDisplayTitle(originalIndex, title));
+      return '''<?xml version='1.0' encoding='utf-8'?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>$escapedTitle</title>
+  </head>
+  <body>
+    <h1>$escapedTitle</h1>
+${paragraphsHtml}
+  </body>
+</html>''';
+    }
+  }
+
+  String _buildDisplayTitle(int index, String rawTitle) {
+    final chapterNumber = index + 1;
+    final cleaned = rawTitle.trim();
+    if (cleaned.isEmpty) {
+      return 'Chapter $chapterNumber';
+    }
+    // If title already contains a chapter indicator, keep as-is but prepend standardized chapter number for consistency
+    if (RegExp(r'chapter\s+\d+', caseSensitive: false).hasMatch(cleaned)) {
+      return 'Chapter $chapterNumber – $cleaned';
+    }
+    return 'Chapter $chapterNumber – $cleaned';
   }
 
   Future<void> _createContentOpf(
@@ -127,8 +219,9 @@ $paragraphsHtml
     final spineItems = StringBuffer();
 
     for (int i = 0; i < originalEpub.chapters.length; i++) {
+      final chapter = originalEpub.chapters[i];
       manifestItems.writeln(
-        '    <item href="chapter_$i.html" id="chapter_$i" media-type="application/xhtml+xml"/>',
+        '    <item href="${chapter.href}" id="chapter_$i" media-type="application/xhtml+xml"/>',
       );
       spineItems.write('    <itemref idref="chapter_$i"/>\n');
     }
@@ -187,7 +280,7 @@ ${spineItems.toString().trimRight()}
       navPoints.writeln('      <navLabel>');
       navPoints.writeln('        <text>$escapedTitle</text>');
       navPoints.writeln('      </navLabel>');
-      navPoints.writeln('      <content src="chapter_$i.html"/>');
+      navPoints.writeln('      <content src="${chapter.href}"/>');
       navPoints.writeln('    </navPoint>');
     }
 
@@ -216,56 +309,122 @@ ${navPoints.toString().trimRight()}
   }
 
   Future<void> _createZip(Directory tempDir, String outputPath) async {
-    final encoder = ZipFileEncoder();
-    encoder.create(outputPath);
+    // EPUB spec requires mimetype to be:
+    // 1. First file in the archive
+    // 2. Stored uncompressed (compression level 0)
+    // 3. No extra fields
+    // Apple Books strictly enforces this.
 
-    // Add mimetype first (uncompressed as per EPUB spec)
+    final archive = Archive();
+
+    // Add mimetype first, uncompressed
     final mimetypeFile = File(path.join(tempDir.path, 'mimetype'));
-    encoder.addFile(mimetypeFile, 'mimetype');
+    final mimetypeBytes = await mimetypeFile.readAsBytes();
+    archive.addFile(
+      ArchiveFile('mimetype', mimetypeBytes.length, mimetypeBytes)
+        ..compress = false, // Critical: no compression
+    );
 
-    // Add all other files
-    await _addDirectoryToZip(
-      encoder,
+    // Add all other files with compression
+    await _addDirectoryToArchive(
+      archive,
       Directory(path.join(tempDir.path, 'META-INF')),
       'META-INF',
     );
-    await _addDirectoryToZip(
-      encoder,
+    await _addDirectoryToArchive(
+      archive,
       Directory(path.join(tempDir.path, 'OEBPS')),
       'OEBPS',
     );
 
-    encoder.close();
+    // Write the archive to file
+    final outputFile = File(outputPath);
+    await outputFile.writeAsBytes(ZipEncoder().encode(archive)!);
   }
 
-  Future<void> _addDirectoryToZip(
-    ZipFileEncoder encoder,
+  Future<void> _addDirectoryToArchive(
+    Archive archive,
     Directory dir,
     String basePath,
   ) async {
     await for (final entity in dir.list()) {
       if (entity is File) {
         final relativePath = path.join(basePath, path.basename(entity.path));
-        encoder.addFile(entity, relativePath);
+        final bytes = await entity.readAsBytes();
+        archive.addFile(ArchiveFile(relativePath, bytes.length, bytes));
       } else if (entity is Directory) {
         final relativePath = path.join(basePath, path.basename(entity.path));
-        await _addDirectoryToZip(encoder, entity, relativePath);
+        await _addDirectoryToArchive(archive, entity, relativePath);
       }
     }
   }
 
   String _escapeXml(String text) {
+    // Minimal XML escaping; let the XmlText serializer handle typical cases.
     return text
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
-        .replaceAll("'", '&apos;')
-        .replaceAll('\u2019', '&apos;') // Right single quote
-        .replaceAll('\u2018', '&apos;') // Left single quote
-        .replaceAll('\u201D', '&quot;') // Right double quote
-        .replaceAll('\u201C', '&quot;') // Left double quote
-        .replaceAll('\u2014', '&#8212;') // Em dash
-        .replaceAll('\u2013', '&#8211;'); // En dash
+        .replaceAll("'", '&apos;');
+  }
+
+  /// Normalize HTML5-style self-closing tags to XHTML format
+  String _normalizeToXhtml(String html) {
+    // List of void elements that should be self-closing in XHTML
+    final voidElements = [
+      'area',
+      'base',
+      'br',
+      'col',
+      'embed',
+      'hr',
+      'img',
+      'input',
+      'link',
+      'meta',
+      'param',
+      'source',
+      'track',
+      'wbr',
+    ];
+
+    var normalized = html;
+
+    for (final tag in voidElements) {
+      // Match opening tags that are not self-closing: <tag ...> but not <tag ... />
+      final pattern = RegExp('<($tag)([^>]*?)(?<!/)>', caseSensitive: false);
+
+      normalized = normalized.replaceAllMapped(pattern, (match) {
+        final tagName = match.group(1);
+        final attributes = match.group(2);
+        return '<$tagName$attributes />';
+      });
+    }
+
+    return normalized;
+  }
+
+  /// Validate XHTML content by attempting to parse it as XML
+  void _validateXhtml(String xhtml, String filename) {
+    try {
+      XmlDocument.parse(xhtml);
+      print('✓ Validated: $filename');
+    } catch (e) {
+      print('⚠ Warning: XHTML validation failed for $filename');
+      print('  Error: $e');
+
+      // Try to extract more specific error information
+      if (e is XmlParserException) {
+        print('  Position: line ${e.line}, column ${e.column}');
+
+        // Show a snippet of the problematic area
+        final lines = xhtml.split('\n');
+        if (e.line > 0 && e.line <= lines.length) {
+          final problemLine = lines[e.line - 1];
+          print('  Line content: ${problemLine.trim()}');
+        }
+      }
+    }
   }
 }

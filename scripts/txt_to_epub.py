@@ -58,10 +58,21 @@ class StoryParser:
     
     def _extract_chapters(self, _lines):
         """Extract chapters from content"""
-        # Use regex to find all chapter blocks
+        # Normalize separators that may appear inline like "--- CHAPTER:"
+        normalized = re.sub(r"---\s*CHAPTER:", "---\nCHAPTER:", self.content)
+
+        # Use regex to find all chapter blocks, allowing flexible whitespace
         # Pattern: ---\nCHAPTER: id\nTITLE: title\n---\ncontent
-        pattern = r'---\s*\nCHAPTER:\s*(\S+)\s*\nTITLE:\s*(.+?)\s*\n---\s*\n(.*?)(?=\n---\s*\nCHAPTER:|\n---\s*$|$)'
-        matches = re.finditer(pattern, self.content, re.DOTALL)
+        pattern = (
+            r"---\s*\n+"               # opening separator (allow blank lines)
+            r"CHAPTER:\s*(.+?)\s*\n"    # chapter id (allow spaces, e.g., "1 Intro")
+            r"TITLE:\s*(.+?)\s*\n"      # chapter title
+            r"---\s*\n"                  # content separator
+            r"(.*?)"                        # chapter content
+            r"(?=\n---\s*\nCHAPTER:|\n---\s*$|$)"  # lookahead for next chapter or end
+        )
+
+        matches = re.finditer(pattern, normalized, re.DOTALL)
 
         for match in matches:
             chapter_id = match.group(1)
@@ -83,20 +94,22 @@ class StoryParser:
         # Handle both numeric IDs and special IDs like "0_intro", "31", "999", etc.
         def sort_key(chapter):
             ch_id = chapter['id']
-            # Try to extract numeric part
+            # Try to extract leading numeric part from IDs like "1", "1 Intro", "0_intro"
+            m = re.match(r"^(\d+)", ch_id)
+            if m:
+                try:
+                    return (int(m.group(1)), ch_id)
+                except ValueError:
+                    pass
+            # Fallback: attempt underscore-based numeric prefix
             if '_' in ch_id:
-                # Handle IDs like "0_intro", "1_profanity_level1"
                 parts = ch_id.split('_')
                 try:
                     return (int(parts[0]), ch_id)
                 except ValueError:
-                    return (999999, ch_id)
-            else:
-                # Handle numeric IDs like "1", "51", "999"
-                try:
-                    return (int(ch_id), ch_id)
-                except ValueError:
-                    return (999999, ch_id)
+                    pass
+            # Fallback: push unknowns to the end but keep stable order
+            return (999999, ch_id)
         
         return sorted(self.chapters, key=sort_key)
 
@@ -107,6 +120,9 @@ class EPUBBuilder:
         self.output_path = output_path
         self.chapters = parser.get_chapters_ordered()
         self.temp_dir = tempfile.mkdtemp()
+        
+        # Map original chapter ids to sanitized file-friendly ids
+        self._id_map = {ch['id']: self._sanitize_id(ch['id']) for ch in self.chapters}
     
     def build(self):
         """Build the EPUB file"""
@@ -147,7 +163,8 @@ class EPUBBuilder:
         """Create chapter HTML files"""
         for chapter in self.chapters:
             html = self._generate_chapter_html(chapter)
-            filename = f"chapter_{chapter['id']}.html"
+            safe_id = self._id_map[chapter['id']]
+            filename = f"chapter_{safe_id}.html"
             with open(os.path.join(self.temp_dir, 'OEBPS', filename), 'w', encoding='utf-8') as f:
                 f.write(html)
     
@@ -169,13 +186,13 @@ class EPUBBuilder:
         """Create OEBPS/content.opf (manifest)"""
         # Create manifest items
         manifest_items = '\n    '.join([
-            f'<item href="chapter_{ch["id"]}.html" id="chapter_{ch["id"]}" media-type="application/xhtml+xml"/>'
+            f'<item href="chapter_{self._id_map[ch["id"]]}.html" id="chapter_{self._id_map[ch["id"]]}" media-type="application/xhtml+xml"/>'
             for ch in self.chapters
         ])
         
         # Create spine references
         spine_items = ''.join([
-            f'<itemref idref="chapter_{ch["id"]}"/>'
+            f'<itemref idref="chapter_{self._id_map[ch["id"]]}"/>'
             for ch in self.chapters
         ])
         
@@ -203,7 +220,7 @@ class EPUBBuilder:
     def _create_toc_ncx(self):
         """Create OEBPS/toc.ncx (table of contents)"""
         nav_points = '\n    '.join([
-            f'<navPoint id="np{i+1}" playOrder="{i+1}"><navLabel><text>{escape(ch["title"])}</text></navLabel><content src="chapter_{ch["id"]}.html"/></navPoint>'
+            f'<navPoint id="np{i+1}" playOrder="{i+1}"><navLabel><text>{escape(ch["title"])}</text></navLabel><content src="chapter_{self._id_map[ch["id"]]}.html"/></navPoint>'
             for i, ch in enumerate(self.chapters)
         ])
         
@@ -238,6 +255,19 @@ class EPUBBuilder:
                     file_path = os.path.join(root, file)
                     arcname = os.path.relpath(file_path, self.temp_dir)
                     epub.write(file_path, arcname)
+
+    def _sanitize_id(self, raw_id: str) -> str:
+        """Sanitize chapter id to be filesystem and EPUB-friendly.
+        - Lowercase
+        - Replace whitespace with underscores
+        - Remove characters other than a-z, 0-9, underscore
+        """
+        s = raw_id.lower()
+        s = re.sub(r"\s+", "_", s)
+        s = re.sub(r"[^a-z0-9_]", "", s)
+        # Collapse multiple underscores
+        s = re.sub(r"_+", "_", s).strip('_')
+        return s or "chapter"
 
 
 def main():
