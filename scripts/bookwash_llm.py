@@ -580,20 +580,21 @@ CRITICAL RULES:
 1. Return ONLY the cleaned text - no explanations, no metadata
 2. NEVER use [...] or ellipses for removed content
 3. Preserve paragraph structure EXACTLY - same number of paragraphs
-4. Keep formatting, punctuation, and quotation marks intact"""
+4. Keep formatting, punctuation, and quotation marks intact
+5. CHAPTER TITLES: The first line may be a chapter title. If it contains profanity, CLEAN it but keep it as a short title (not a paragraph). Example: "The S**t Show" → "The Disaster\""""
         
         # Adjust rules based on aggression for strict targets (G/PG)
         if aggression >= 2 and (lang <= 2 or sexual <= 2):
             prompt += """
-5. For G/PG targets: AGGRESSIVELY remove suggestive content - do not try to preserve it
-6. Replace problematic paragraphs with simple neutral summaries
-7. Remove all body-focused language, physical descriptions of attraction
-8. Cut rather than rephrase when content is borderline"""
+6. For G/PG targets: AGGRESSIVELY remove suggestive content - do not try to preserve it
+7. Replace problematic paragraphs with simple neutral summaries
+8. Remove all body-focused language, physical descriptions of attraction
+9. Cut rather than rephrase when content is borderline"""
         else:
             prompt += """
-5. Use minimal replacements - prefer simple phrases over creative elaboration
-6. DO NOT add new plot elements or details not in the original
-7. Preserve emotional tone and narrative voice"""
+6. Use minimal replacements - prefer simple phrases over creative elaboration
+7. DO NOT add new plot elements or details not in the original
+8. Preserve emotional tone and narrative voice"""
         
         prompt += f"""
 
@@ -703,44 +704,123 @@ def find_changes(original_paragraphs: list, cleaned_paragraphs: list,
                  target_lang: int, target_sexual: int, target_violence: int) -> tuple:
     """
     Compare original and cleaned paragraphs, generate #CHANGE blocks.
+    Uses fuzzy matching to align paragraphs correctly even if counts differ.
     Returns (new_content_lines, next_change_id).
     """
+    from difflib import SequenceMatcher
+    
     lines = []
     change_id = start_change_id
     
-    # Handle paragraph count mismatch
-    if len(original_paragraphs) != len(cleaned_paragraphs):
-        print(f"  Warning: Paragraph count mismatch ({len(original_paragraphs)} vs {len(cleaned_paragraphs)})")
-        # Pad shorter list with empty strings
-        max_len = max(len(original_paragraphs), len(cleaned_paragraphs))
-        original_paragraphs = original_paragraphs + [''] * (max_len - len(original_paragraphs))
-        cleaned_paragraphs = cleaned_paragraphs + [''] * (max_len - len(cleaned_paragraphs))
-    
-    for i, (orig, cleaned) in enumerate(zip(original_paragraphs, cleaned_paragraphs)):
-        orig = orig.strip()
-        cleaned = cleaned.strip()
-        
-        if orig == cleaned or not orig:
-            # No change
-            if orig:
+    # If counts match, do simple 1:1 comparison
+    if len(original_paragraphs) == len(cleaned_paragraphs):
+        for i, (orig, cleaned) in enumerate(zip(original_paragraphs, cleaned_paragraphs)):
+            orig = orig.strip()
+            cleaned = cleaned.strip()
+            
+            if orig == cleaned or not orig:
+                # No change
+                if orig:
+                    lines.append('')  # Blank line separator
+                    lines.append(orig)
+            else:
+                # Change detected
                 lines.append('')  # Blank line separator
+                lines.append(f'#CHANGE: c{change_id:03d}')
+                lines.append('#STATUS: pending')
+                
+                reason = _infer_reason(orig, cleaned, target_lang, target_sexual, target_violence)
+                lines.append(f'#REASON: {reason}')
+                
+                lines.append('#ORIGINAL')
                 lines.append(orig)
+                lines.append('#CLEANED')
+                lines.append(cleaned)
+                lines.append('#END')
+                
+                change_id += 1
+        return lines, change_id
+    
+    # Paragraph count mismatch - use fuzzy matching
+    print(f"  Note: Paragraph count differs ({len(original_paragraphs)} orig vs {len(cleaned_paragraphs)} cleaned), using alignment...")
+    
+    # Build a mapping from original paragraphs to their best matching cleaned paragraphs
+    # using sequence similarity
+    orig_to_cleaned = {}
+    used_cleaned = set()
+    
+    for i, orig in enumerate(original_paragraphs):
+        orig = orig.strip()
+        if not orig:
+            continue
+            
+        best_match = -1
+        best_ratio = 0.0
+        
+        for j, cleaned in enumerate(cleaned_paragraphs):
+            if j in used_cleaned:
+                continue
+            cleaned = cleaned.strip()
+            if not cleaned:
+                continue
+            
+            # Calculate similarity
+            ratio = SequenceMatcher(None, orig, cleaned).ratio()
+            
+            # If orig is short (like a title) and cleaned contains it, boost score
+            if len(orig) < 100 and orig.lower() in cleaned.lower():
+                ratio = max(ratio, 0.3)  # Ensure it gets considered
+            
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_match = j
+        
+        # Only match if similarity is reasonable (>30%) or if cleaned contains original
+        if best_match >= 0 and best_ratio > 0.3:
+            orig_to_cleaned[i] = best_match
+            used_cleaned.add(best_match)
+    
+    # Now process each original paragraph
+    for i, orig in enumerate(original_paragraphs):
+        orig = orig.strip()
+        if not orig:
+            continue
+        
+        if i in orig_to_cleaned:
+            cleaned_idx = orig_to_cleaned[i]
+            cleaned = cleaned_paragraphs[cleaned_idx].strip()
+            
+            if orig == cleaned:
+                # No change
+                lines.append('')
+                lines.append(orig)
+            else:
+                # Change detected
+                lines.append('')
+                lines.append(f'#CHANGE: c{change_id:03d}')
+                lines.append('#STATUS: pending')
+                
+                reason = _infer_reason(orig, cleaned, target_lang, target_sexual, target_violence)
+                lines.append(f'#REASON: {reason}')
+                
+                lines.append('#ORIGINAL')
+                lines.append(orig)
+                lines.append('#CLEANED')
+                lines.append(cleaned)
+                lines.append('#END')
+                
+                change_id += 1
         else:
-            # Change detected
-            lines.append('')  # Blank line separator
+            # Original paragraph was removed entirely
+            lines.append('')
             lines.append(f'#CHANGE: c{change_id:03d}')
             lines.append('#STATUS: pending')
-            
-            # Determine reason based on content analysis
-            reason = _infer_reason(orig, cleaned, target_lang, target_sexual, target_violence)
-            lines.append(f'#REASON: {reason}')
-            
+            lines.append('#REASON: content removed for target rating')
             lines.append('#ORIGINAL')
             lines.append(orig)
             lines.append('#CLEANED')
-            lines.append(cleaned)
+            lines.append('')  # Empty cleaned version
             lines.append('#END')
-            
             change_id += 1
     
     return lines, change_id

@@ -286,7 +286,11 @@ def apply_changes(chapter: Chapter, mode: str) -> str:
 
 
 def text_to_xhtml(text: str, title: str) -> str:
-    """Convert plain text chapter content to XHTML."""
+    """Convert plain text chapter content to XHTML.
+    
+    Always outputs the chapter title as an H1, then the content as paragraphs.
+    If the first paragraph matches the title, it's skipped to avoid duplication.
+    """
     # Split into paragraphs
     paragraphs = text.strip().split('\n\n')
     
@@ -306,24 +310,67 @@ def text_to_xhtml(text: str, title: str) -> str:
     xhtml_parts.append('</head>')
     xhtml_parts.append('<body>')
     
+    # Always output the chapter title as H1
+    xhtml_parts.append(f'  <h1>{html_escape(title)}</h1>')
+    
+    first_content_para = True
     for i, para in enumerate(paragraphs):
         para = para.strip()
         if not para:
             continue
         
-        # Check if it looks like a chapter title (short, no punctuation at end)
-        if i == 0 and len(para) < 100 and not para.endswith(('.', '!', '?', '"', "'")):
-            xhtml_parts.append(f'  <h1>{html_escape(para)}</h1>')
-        else:
-            # Handle single newlines as line breaks within paragraphs
-            para_html = html_escape(para).replace('\n', '<br/>\n')
-            css_class = ' class="first"' if i <= 1 else ''
-            xhtml_parts.append(f'  <p{css_class}>{para_html}</p>')
+        # Skip if this paragraph is just the chapter title (to avoid duplication)
+        if para.lower() == title.lower():
+            continue
+        
+        # Handle single newlines as line breaks within paragraphs
+        para_html = html_escape(para).replace('\n', '<br/>\n')
+        css_class = ' class="first"' if first_content_para else ''
+        xhtml_parts.append(f'  <p{css_class}>{para_html}</p>')
+        first_content_para = False
     
     xhtml_parts.append('</body>')
     xhtml_parts.append('</html>')
     
     return '\n'.join(xhtml_parts)
+
+
+def get_display_title(chapter: Chapter, mode: str) -> str:
+    """
+    Get the chapter title to display, applying any cleaning if needed.
+    
+    If the chapter title was edited by the LLM (original title in a change block
+    was replaced with a cleaned version), use the cleaned version when applying changes.
+    """
+    title = chapter.title
+    
+    if mode == 'none':
+        return title
+    
+    # Check if there's a change that modifies the title
+    for change in chapter.changes:
+        original = change.original.strip()
+        cleaned = change.cleaned.strip()
+        
+        # Check if this change is for the title (original matches title, cleaned is short)
+        if original.lower() == title.lower():
+            should_apply = False
+            if mode == 'all':
+                should_apply = change.status in ('pending', 'accepted')
+            elif mode == 'accepted':
+                should_apply = change.status == 'accepted'
+            
+            if should_apply and cleaned:
+                # Get the first line of cleaned if it looks like a title
+                first_line = cleaned.split('\n')[0].strip()
+                # If the first line is short (< 100 chars) and doesn't end with period,
+                # it's likely a cleaned title
+                if len(first_line) < 100 and not first_line.endswith(('.', '!', '?')):
+                    return first_line
+                # Otherwise the title was replaced with content, keep original title
+                return title
+    
+    return title
 
 
 def create_epub(book: BookwashFile, output_path: str, mode: str, verbose: bool = False):
@@ -357,11 +404,14 @@ def create_epub(book: BookwashFile, output_path: str, mode: str, verbose: bool =
         toc_items = []
         
         for chapter in book.chapters:
+            # Get the display title (may be cleaned if it had profanity)
+            display_title = get_display_title(chapter, mode)
+            
             # Apply changes based on mode
             processed_text = apply_changes(chapter, mode)
             
             # Convert to XHTML
-            xhtml_content = text_to_xhtml(processed_text, chapter.title)
+            xhtml_content = text_to_xhtml(processed_text, display_title)
             
             # Write chapter file
             chapter_filename = f'chapter{chapter.number:03d}.xhtml'
@@ -372,7 +422,7 @@ def create_epub(book: BookwashFile, output_path: str, mode: str, verbose: bool =
             chapter_id = f'chapter{chapter.number:03d}'
             manifest_items.append(f'    <item id="{chapter_id}" href="{chapter_filename}" media-type="application/xhtml+xml"/>')
             spine_items.append(f'    <itemref idref="{chapter_id}"/>')
-            toc_items.append((chapter.number, chapter.title, chapter_filename))
+            toc_items.append((chapter.number, display_title, chapter_filename))
             
             if verbose:
                 change_count = sum(1 for c in chapter.changes if 
