@@ -39,9 +39,9 @@ class _BookWashHomeState extends State<BookWashHome> {
   String? selectedFileName;
   ParsedEpub? parsedEpub;
   bool isLoadingFile = false;
-  int profanityLevel = 3;
-  int sexualContentLevel = 3;
-  int violenceLevel = 3;
+  int profanityLevel = 2; // Default: PG language
+  int sexualContentLevel = 2; // Default: PG sexual content
+  int violenceLevel = 5; // Default: Unrated violence (no censorship)
   bool isProcessing = false;
   bool isCancelling = false;
   double progress = 0.0;
@@ -80,6 +80,12 @@ class _BookWashHomeState extends State<BookWashHome> {
   // Real-time logging
   List<String> liveLogMessages = [];
   final _scrollController = ScrollController();
+  bool _autoScrollLog = true; // user-controlled auto-scroll for live log
+
+  // Debug comparisons (per paragraph)
+  // key: unique id "chapterIndex:paragraphIndex"; value: [original, cleaned]
+  final Map<String, List<String>> _paraComparisons = {};
+  final Set<String> _revealedComparisons = {};
 
   // Cleaned book data
   List<String> cleanedParagraphs = [];
@@ -98,6 +104,7 @@ class _BookWashHomeState extends State<BookWashHome> {
     super.initState();
     ollamaService = OllamaService(model: selectedModel);
     _loadSavedApiKey();
+    _loadSavedLevels();
     _loadAvailableModels();
   }
 
@@ -115,6 +122,20 @@ class _BookWashHomeState extends State<BookWashHome> {
   Future<void> _saveApiKey(String key) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('gemini_api_key', key);
+  }
+
+  Future<void> _loadSavedLevels() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      profanityLevel = prefs.getInt('profanity_level') ?? profanityLevel;
+      sexualContentLevel = prefs.getInt('sexual_level') ?? sexualContentLevel;
+      violenceLevel = prefs.getInt('violence_level') ?? violenceLevel;
+    });
+  }
+
+  Future<void> _saveLevel(String key, int value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(key, value);
   }
 
   Future<void> _loadAvailableModels() async {
@@ -562,6 +583,7 @@ class _BookWashHomeState extends State<BookWashHome> {
 
   // Auto-scroll the log to bottom
   void _scrollToBottom() {
+    if (!_autoScrollLog) return; // respect user toggle
     if (_scrollController.hasClients) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scrollController.animateTo(
@@ -731,11 +753,29 @@ class _BookWashHomeState extends State<BookWashHome> {
               );
               print('  ORIGINAL: ' + orig);
               print('  CLEANED : ' + cleaned);
+              _paraComparisons['$chapterIdx:$pi'] = [orig, cleaned];
             } else {
+              // unchanged; do not store comparison or log for UI
               print(
                 'DEBUG: Chapter ${chapterIdx + 1} paragraph ${pi + 1} unchanged',
               );
             }
+          }
+
+          // UI log entries for paragraph-level reveal (first pass)
+          final firstPassLogs = <String>[];
+          for (int pi = 0; pi < maxPairs; pi++) {
+            final key = '$chapterIdx:$pi';
+            if (_paraComparisons.containsKey(key)) {
+              firstPassLogs.add(
+                'Chapter ${chapterIdx + 1} paragraph ${pi + 1} modified',
+              );
+            }
+          }
+          if (firstPassLogs.isNotEmpty) {
+            setState(() {
+              liveLogMessages.addAll(firstPassLogs);
+            });
           }
 
           // Add all cleaned paragraphs to this chapter
@@ -900,6 +940,83 @@ class _BookWashHomeState extends State<BookWashHome> {
                 cleanedParagraphs.add(para);
               }
 
+              // Update comparisons after second pass
+              for (
+                int pi = 0;
+                pi <
+                    (firstPassParas.length > reCleanedParas.length
+                        ? firstPassParas.length
+                        : reCleanedParas.length);
+                pi++
+              ) {
+                final orig2 = pi < firstPassParas.length
+                    ? firstPassParas[pi]
+                    : '<missing>';
+                final cleaned2 = pi < reCleanedParas.length
+                    ? reCleanedParas[pi]
+                    : '<missing>';
+                final key = '$chapterIdx:$pi';
+                final changed = orig2.trim() != cleaned2.trim();
+                if (changed) {
+                  // Preserve original baseline if this paragraph was previously modified; otherwise use orig2 as baseline.
+                  if (_paraComparisons.containsKey(key)) {
+                    final originalBaseline = _paraComparisons[key]![0];
+                    _paraComparisons[key] = [originalBaseline, cleaned2];
+                  } else {
+                    _paraComparisons[key] = [orig2, cleaned2];
+                  }
+                } else {
+                  // If previously modified (from first pass) but unchanged now, keep existing comparison.
+                }
+              }
+
+              // Paragraph-level second-pass diffs omitted unless newly created.
+              // (Future enhancement: track previous cleaned version to differentiate.)
+
+              // Add log entries for paragraphs newly modified in second pass
+              final newlyModifiedSecondPass = <String>[];
+              for (
+                int pi = 0;
+                pi <
+                    (firstPassParas.length > reCleanedParas.length
+                        ? firstPassParas.length
+                        : reCleanedParas.length);
+                pi++
+              ) {
+                final key = '$chapterIdx:$pi';
+                // Newly modified if it wasn't in comparisons before and now exists OR if existing comparison's cleaned text differs from reCleanedParas
+                final reCleaned = pi < reCleanedParas.length
+                    ? reCleanedParas[pi]
+                    : '<missing>';
+                final firstPass = pi < firstPassParas.length
+                    ? firstPassParas[pi]
+                    : '<missing>';
+                final comp = _paraComparisons[key];
+                // Determine if key added in this pass and firstPass == comp[0] (baseline) and comp[1] == reCleaned
+                // We can't directly know if key existed before; approximate: if firstPass.trim() == reCleaned.trim() skip.
+                if (firstPass.trim() != reCleaned.trim()) {
+                  // Avoid duplicating logs for paragraphs already logged as modified in first pass and unchanged in second pass
+                  if (firstPass.trim() == (comp?[0].trim() ?? '') &&
+                      reCleaned.trim() == (comp?[1].trim() ?? '')) {
+                    // It is a modified paragraph either from first or second; we will log only if it was not logged before second pass.
+                    // Without state we skip logging duplicates.
+                  }
+                  // Log only if paragraph was not previously modified (no existing comparison before pass). We approximate by checking if first pass cleaned matched original baseline (meaning first pass didn't change) but comp exists now.
+                  // If it was modified in first pass, do nothing; new modifications get logged below.
+                  // Approximation: comp exists AND comp[0] == firstPass (original) indicates second pass changed an unchanged paragraph.
+                  if (comp != null && comp[0].trim() == firstPass.trim()) {
+                    newlyModifiedSecondPass.add(
+                      'Chapter ${chapterIdx + 1} paragraph ${pi + 1} modified (2nd pass)',
+                    );
+                  }
+                }
+              }
+              if (newlyModifiedSecondPass.isNotEmpty) {
+                setState(() {
+                  liveLogMessages.addAll(newlyModifiedSecondPass);
+                });
+              }
+
               // Log summary of second pass
               setState(() {
                 liveLogMessages.add(
@@ -961,6 +1078,35 @@ class _BookWashHomeState extends State<BookWashHome> {
                 .split('\n\n')
                 .where((p) => p.trim().isNotEmpty)
                 .toList();
+
+            // Record comparisons & UI log entries for chunk paragraphs
+            final origChunkParas = chunkText
+                .split('\n\n')
+                .where((p) => p.trim().isNotEmpty)
+                .toList();
+            final chunkLogs = <String>[];
+            for (
+              int localPi = 0;
+              localPi < cleanedChunkParagraphs.length;
+              localPi++
+            ) {
+              final globalPi = i + localPi; // index within chapter
+              final origP = localPi < origChunkParas.length
+                  ? origChunkParas[localPi]
+                  : '<missing>';
+              final cleanedP = cleanedChunkParagraphs[localPi];
+              if (origP.trim() != cleanedP.trim()) {
+                _paraComparisons['$chapterIdx:$globalPi'] = [origP, cleanedP];
+                chunkLogs.add(
+                  'Chapter ${chapterIdx + 1} paragraph ${globalPi + 1} modified',
+                );
+              }
+            }
+            if (chunkLogs.isNotEmpty) {
+              setState(() {
+                liveLogMessages.addAll(chunkLogs);
+              });
+            }
 
             // Add all cleaned paragraphs to this chapter
             for (final para in cleanedChunkParagraphs) {
@@ -1543,7 +1689,11 @@ class _BookWashHomeState extends State<BookWashHome> {
                     _buildSliderSection(
                       'Language',
                       profanityLevel,
-                      (value) => setState(() => profanityLevel = value.toInt()),
+                      (value) {
+                        final v = value.toInt();
+                        setState(() => profanityLevel = v);
+                        _saveLevel('profanity_level', v);
+                      },
                       [
                         '1 - G Rated: No profanity or crude language (Most censorship)',
                         '2 - PG Rated: Mild language allowed (Heavy censorship)',
@@ -1556,8 +1706,11 @@ class _BookWashHomeState extends State<BookWashHome> {
                     _buildSliderSection(
                       'Sexual Content',
                       sexualContentLevel,
-                      (value) =>
-                          setState(() => sexualContentLevel = value.toInt()),
+                      (value) {
+                        final v = value.toInt();
+                        setState(() => sexualContentLevel = v);
+                        _saveLevel('sexual_level', v);
+                      },
                       [
                         '1 - G Rated: No sexual content allowed (Most censorship)',
                         '2 - PG Rated: Light romance only (Heavy censorship)',
@@ -1570,7 +1723,11 @@ class _BookWashHomeState extends State<BookWashHome> {
                     _buildSliderSection(
                       'Violence',
                       violenceLevel,
-                      (value) => setState(() => violenceLevel = value.toInt()),
+                      (value) {
+                        final v = value.toInt();
+                        setState(() => violenceLevel = v);
+                        _saveLevel('violence_level', v);
+                      },
                       [
                         '1 - G Rated: No violence (Most censorship)',
                         '2 - PG Rated: Mild conflict only (Heavy censorship)',
@@ -1661,51 +1818,74 @@ class _BookWashHomeState extends State<BookWashHome> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      // Real-time statistics
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: Colors.blue.withOpacity(0.3),
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceAround,
-                              children: [
-                                _buildStatItem(
-                                  'Processed',
-                                  '$processedParagraphs / $totalParagraphs',
-                                  Icons.article,
-                                ),
-                                _buildStatItem(
-                                  'Modified',
-                                  '$modifiedParagraphs',
-                                  Icons.edit,
-                                  color: modifiedParagraphs > 0
-                                      ? Colors.orange
-                                      : Colors.grey,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
                       // Live logging display
                       if (liveLogMessages.isNotEmpty)
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Live Processing Log:',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: const Text(
+                                    'Live Processing Log:',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    const Text(
+                                      'Auto-scroll',
+                                      style: TextStyle(fontSize: 12),
+                                    ),
+                                    Switch(
+                                      value: _autoScrollLog,
+                                      onChanged: (val) {
+                                        setState(() {
+                                          _autoScrollLog = val;
+                                        });
+                                        if (val) {
+                                          // If re-enabled, jump immediately
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                                if (_scrollController
+                                                    .hasClients) {
+                                                  _scrollController.jumpTo(
+                                                    _scrollController
+                                                        .position
+                                                        .maxScrollExtent,
+                                                  );
+                                                }
+                                              });
+                                        }
+                                      },
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        if (_scrollController.hasClients) {
+                                          _scrollController.animateTo(
+                                            _scrollController
+                                                .position
+                                                .maxScrollExtent,
+                                            duration: const Duration(
+                                              milliseconds: 250,
+                                            ),
+                                            curve: Curves.easeOut,
+                                          );
+                                        }
+                                      },
+                                      child: const Text(
+                                        'Jump to bottom',
+                                        style: TextStyle(fontSize: 12),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 8),
                             Container(
@@ -1722,17 +1902,152 @@ class _BookWashHomeState extends State<BookWashHome> {
                                 controller: _scrollController,
                                 itemCount: liveLogMessages.length,
                                 itemBuilder: (context, index) {
+                                  final log = liveLogMessages[index];
+                                  int? chapterForLog;
+                                  int? paraForLog;
+                                  final chMatch = RegExp(
+                                    r'Chapter\s+(\d+)',
+                                  ).firstMatch(log);
+                                  if (chMatch != null) {
+                                    chapterForLog = int.tryParse(
+                                      chMatch.group(1)!,
+                                    );
+                                  }
+                                  final paraMatch = RegExp(
+                                    r'paragraph\s+(\d+)',
+                                  ).firstMatch(log.toLowerCase());
+                                  if (paraMatch != null) {
+                                    paraForLog = int.tryParse(
+                                      paraMatch.group(1)!,
+                                    );
+                                  }
+                                  String? key;
+                                  if (chapterForLog != null &&
+                                      paraForLog != null) {
+                                    key =
+                                        '${chapterForLog - 1}:${paraForLog - 1}';
+                                  }
+                                  final hasComparison =
+                                      key != null &&
+                                      _paraComparisons.containsKey(key);
+
                                   return Padding(
                                     padding: const EdgeInsets.symmetric(
-                                      vertical: 2,
+                                      vertical: 4,
                                     ),
-                                    child: Text(
-                                      liveLogMessages[index],
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        fontFamily: 'monospace',
-                                        color: Colors.orange,
-                                      ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          log,
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            fontFamily: 'monospace',
+                                            color: Colors.orange,
+                                          ),
+                                        ),
+                                        if (hasComparison)
+                                          Row(
+                                            children: [
+                                              TextButton(
+                                                onPressed: () {
+                                                  setState(() {
+                                                    if (key == null) return;
+                                                    if (_revealedComparisons
+                                                        .contains(key)) {
+                                                      _revealedComparisons
+                                                          .remove(key);
+                                                    } else {
+                                                      _revealedComparisons.add(
+                                                        key,
+                                                      );
+                                                    }
+                                                  });
+                                                },
+                                                child: Text(
+                                                  _revealedComparisons.contains(
+                                                        key,
+                                                      )
+                                                      ? 'Hide original content'
+                                                      : 'Reveal original content',
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        if (hasComparison &&
+                                            _revealedComparisons.contains(key))
+                                          Container(
+                                            margin: const EdgeInsets.only(
+                                              top: 6,
+                                            ),
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withOpacity(
+                                                0.2,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                              border: Border.all(
+                                                color: Colors.orange
+                                                    .withOpacity(0.3),
+                                              ),
+                                            ),
+                                            child: Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      const Text(
+                                                        'Original',
+                                                        style: TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 4),
+                                                      Text(
+                                                        _paraComparisons[key]![0],
+                                                        style: const TextStyle(
+                                                          fontSize: 11,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      const Text(
+                                                        'Cleaned',
+                                                        style: TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 4),
+                                                      Text(
+                                                        _paraComparisons[key]![1],
+                                                        style: const TextStyle(
+                                                          fontSize: 11,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   );
                                 },
@@ -1858,29 +2173,6 @@ class _BookWashHomeState extends State<BookWashHome> {
     }
 
     return 'Paragraph $paragraphNum: Removed ${parts.join(', ')}';
-  }
-
-  Widget _buildStatItem(
-    String label,
-    String value,
-    IconData icon, {
-    Color? color,
-  }) {
-    return Column(
-      children: [
-        Icon(icon, size: 32, color: color ?? Colors.blue),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: color ?? Colors.blue,
-          ),
-        ),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-      ],
-    );
   }
 
   Widget _buildSliderSection(
