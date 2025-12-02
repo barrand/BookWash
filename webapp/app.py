@@ -100,7 +100,16 @@ async def home(authenticated: bool = Depends(verify_credentials)):
     # Try Flutter web build first
     flutter_index = FLUTTER_WEB_BUILD / "index.html"
     if flutter_index.exists():
-        return flutter_index.read_text()
+        # Read and lightly transform index.html to disable SW caching in dev
+        html = flutter_index.read_text()
+        ts = int(datetime.now().timestamp())
+        # Cache-bust main assets
+        html = html.replace("main.dart.js", f"main.dart.js?v={ts}")
+        html = html.replace("flutter_bootstrap.js", f"flutter_bootstrap.js?v={ts}")
+        html = html.replace("flutter_service_worker.js", f"flutter_service_worker.js?v={ts}")
+        # Disable service worker registration in dev
+        html = html.replace("navigator.serviceWorker.register", "/* dev: sw disabled */ navigator.serviceWorker && navigator.serviceWorker.unregister")
+        return html
     
     # Fall back to legacy static HTML
     legacy_index = Path(__file__).parent / "static" / "index.html"
@@ -271,28 +280,30 @@ async def process_book_async(
         session["phase"] = "rating"
         session["progress"] = 10
         
-        # Run the LLM script and capture output line by line
+        # Run the LLM script and capture output line by line (async)
         env = os.environ.copy()
         env["GEMINI_API_KEY"] = api_key
         env["PYTHONUNBUFFERED"] = "1"
         
-        process = subprocess.Popen(
-            [sys.executable, "-u", str(SCRIPTS_DIR / "bookwash_llm.py"),
-             "--rate", "--clean",
-             "--language", str(target_language),
-             "--sexual", str(target_adult),
-             "--violence", str(target_violence),
-             "--model", model,
-             str(bookwash_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-u", str(SCRIPTS_DIR / "bookwash_llm.py"),
+            "--rate", "--clean",
+            "--language", str(target_language),
+            "--sexual", str(target_adult),
+            "--violence", str(target_violence),
+            "--model", model,
+            str(bookwash_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
             env=env
         )
         
-        # Stream output to logs
-        for line in process.stdout:
-            line = line.rstrip()
+        # Stream output to logs (async)
+        while True:
+            line_bytes = await process.stdout.readline()
+            if not line_bytes:
+                break
+            line = line_bytes.decode().rstrip()
             if line:
                 add_log(line)
                 
@@ -318,7 +329,7 @@ async def process_book_async(
                     session["phase"] = "cleaning"
                     session["progress"] = 95
         
-        process.wait()
+        await process.wait()
         
         if process.returncode != 0:
             raise Exception("LLM processing failed")
@@ -432,7 +443,7 @@ def parse_bookwash_changes(bookwash_path: str) -> list:
 
 
 @app.get("/api/logs/{session_id}")
-async def stream_logs(session_id: str):
+async def stream_logs(session_id: str, request: Request):
     """
     Stream logs for a session using Server-Sent Events (SSE).
     """
@@ -442,28 +453,36 @@ async def stream_logs(session_id: str):
     async def event_generator():
         last_log_count = 0
         
-        while True:
-            session = sessions.get(session_id)
-            if not session:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'Session expired'})}\n\n"
-                break
-            
-            # Send new logs
-            current_logs = session.get("logs", [])
-            if len(current_logs) > last_log_count:
-                for log in current_logs[last_log_count:]:
-                    yield f"data: {json.dumps({'type': 'log', 'log': log})}\n\n"
-                last_log_count = len(current_logs)
-            
-            # Send status update
-            yield f"data: {json.dumps({'type': 'status', 'status': session['status'], 'progress': session.get('progress', 0), 'phase': session.get('phase', '')})}\n\n"
-            
-            # Stop if processing is complete or errored
-            if session["status"] in ["review", "complete", "error"]:
-                yield f"data: {json.dumps({'type': 'done', 'status': session['status']})}\n\n"
-                break
-            
-            await asyncio.sleep(0.5)
+        try:
+            while True:
+                # Check if client is still connected
+                if await request.is_disconnected():
+                    break
+                
+                session = sessions.get(session_id)
+                if not session:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Session expired'})}\n\n"
+                    break
+                
+                # Send new logs
+                current_logs = session.get("logs", [])
+                if len(current_logs) > last_log_count:
+                    for log in current_logs[last_log_count:]:
+                        yield f"data: {json.dumps({'type': 'log', 'log': log})}\n\n"
+                    last_log_count = len(current_logs)
+                
+                # Send status update
+                yield f"data: {json.dumps({'type': 'status', 'status': session['status'], 'progress': session.get('progress', 0), 'phase': session.get('phase', '')})}\n\n"
+                
+                # Stop if processing is complete or errored
+                if session["status"] in ["review", "complete", "error"]:
+                    yield f"data: {json.dumps({'type': 'done', 'status': session['status']})}\n\n"
+                    break
+                
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            # Client disconnected
+            pass
     
     return StreamingResponse(
         event_generator(),
@@ -471,6 +490,7 @@ async def stream_logs(session_id: str):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable proxy buffering
         }
     )
 

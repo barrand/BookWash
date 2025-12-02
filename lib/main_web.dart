@@ -40,6 +40,11 @@ class BookWashWebHome extends StatefulWidget {
 
 class _BookWashWebHomeState extends State<BookWashWebHome> {
   late final ApiService _api;
+  // Build time injected via --dart-define BUILD_TIME
+  static const String buildTime = String.fromEnvironment(
+    'BUILD_TIME',
+    defaultValue: '',
+  );
 
   // File selection
   String? selectedFileName;
@@ -175,23 +180,23 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
         model: selectedModel,
       );
 
-      // Stream logs
-      _api.streamLogs(session.sessionId).listen((log) {
+      // Stream logs (subscription)
+      final logSub = _api.streamLogs(session.sessionId).listen((log) {
         _addLog(log.message);
       });
 
-      // Stream status
-      await for (final status in _api.streamStatus(session.sessionId)) {
+      // Stream status (subscription)
+      final statusSub = _api.streamStatus(session.sessionId).listen((status) {
         setState(() {
           progress = status.progress / 100;
           progressPhase = status.phase;
           _session = status;
         });
+      });
 
-        if (status.status == 'review' || status.status == 'error') {
-          break;
-        }
-      }
+      // Wait for processing to reach review/error then fetch final session
+      await statusSub.asFuture<void>().catchError((_) {});
+      await logSub.cancel();
 
       // Fetch final session with changes
       final finalSession = await _api.getSession(session.sessionId);
@@ -201,11 +206,108 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
         currentChangeIndex = 0;
       });
     } catch (e) {
-      _addLog('❌ Error: $e');
+      // If auth is required, prompt for credentials and retry once
+      final msg = e.toString();
+      if (msg.contains('401') || msg.contains('Authentication')) {
+        final creds = await _promptForCredentials(context);
+        if (creds != null) {
+          _api.setAuth(creds.$1, creds.$2);
+          try {
+            final session = await _api.uploadEpub(
+              '',
+              selectedFileBytes!,
+              selectedFileName!,
+            );
+            setState(() {
+              _session = session;
+              progressPhase = 'processing';
+            });
+            _addLog('✅ File uploaded');
+
+            await _api.startProcessing(
+              sessionId: session.sessionId,
+              targetLanguage: languageLevel,
+              targetAdult: adultLevel,
+              targetViolence: violenceLevel,
+              model: selectedModel,
+            );
+
+            // Stream logs (subscription)
+            final logSub = _api
+                .streamLogs(session.sessionId)
+                .listen((log) => _addLog(log.message));
+
+            // Stream status (subscription)
+            final statusSub = _api.streamStatus(session.sessionId).listen((
+              status,
+            ) {
+              setState(() {
+                progress = status.progress / 100;
+                progressPhase = status.phase;
+                _session = status;
+              });
+            });
+
+            await statusSub.asFuture<void>().catchError((_) {});
+            await logSub.cancel();
+
+            final finalSession = await _api.getSession(session.sessionId);
+            setState(() {
+              _session = finalSession;
+              isProcessing = false;
+              currentChangeIndex = 0;
+            });
+            return;
+          } catch (e2) {
+            _addLog('❌ Error after auth: $e2');
+          }
+        }
+      } else {
+        _addLog('❌ Error: $e');
+      }
       setState(() {
         isProcessing = false;
       });
     }
+  }
+
+  // Prompt for basic auth credentials
+  Future<(String, String)?> _promptForCredentials(BuildContext context) async {
+    final userController = TextEditingController(text: 'bookwash');
+    final passController = TextEditingController();
+    final result = await showDialog<(String, String)?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Authentication Required'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: userController,
+              decoration: const InputDecoration(labelText: 'Username'),
+            ),
+            TextField(
+              controller: passController,
+              decoration: const InputDecoration(labelText: 'Password'),
+              obscureText: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(
+              ctx,
+            ).pop((userController.text, passController.text)),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    return result;
   }
 
   Future<void> _acceptChange(ChangeItem change) async {
@@ -285,7 +387,37 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('📚 BookWash'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('📚 BookWash'),
+        centerTitle: true,
+        actions: [
+          if (buildTime.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Chip(
+                label: Text(
+                  buildTime,
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+                backgroundColor: Colors.blueGrey.withValues(alpha: 0.2),
+              ),
+            ),
+          TextButton.icon(
+            onPressed: () async {
+              final creds = await _promptForCredentials(context);
+              if (creds != null) {
+                _api.setAuth(creds.$1, creds.$2);
+                _addLog('🔐 Signed in as ${creds.$1}');
+              }
+            },
+            icon: const Icon(Icons.lock_open, color: Colors.white70),
+            label: const Text(
+              'Sign In',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+        ],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Center(
@@ -385,6 +517,26 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
                           Text(
                             'Phase: $progressPhase • ${(progress * 100).toInt()}%',
                           ),
+                          const SizedBox(height: 8),
+                          // Phase badges
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _phaseChip('converting', Icons.sync, Colors.blue),
+                              _phaseChip('rating', Icons.rule, Colors.orange),
+                              _phaseChip(
+                                'cleaning',
+                                Icons.cleaning_services,
+                                Colors.green,
+                              ),
+                              _phaseChip(
+                                'complete',
+                                Icons.done_all,
+                                Colors.purple,
+                              ),
+                            ],
+                          ),
                           const SizedBox(height: 16),
                         ],
                         Row(
@@ -417,7 +569,7 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
                             controller: _logScrollController,
                             padding: const EdgeInsets.all(12),
                             itemCount: logs.length,
-                            itemBuilder: (context, index) => Text(
+                            itemBuilder: (context, index) => SelectableText(
                               logs[index],
                               style: const TextStyle(
                                 fontFamily: 'monospace',
@@ -599,48 +751,70 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
         ],
         const SizedBox(height: 16),
 
-        // Original text
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.red.withValues(alpha: 0.1),
-            border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Original:',
-                style: TextStyle(fontWeight: FontWeight.bold),
+        // Side-by-side Original vs Cleaned with monospace font
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Original
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.06),
+                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Original',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      change.original,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 8),
-              Text(change.original),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 12),
-
-        // Cleaned text
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.green.withValues(alpha: 0.1),
-            border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Cleaned:',
-                style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(width: 12),
+            // Cleaned
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green.withValues(alpha: 0.06),
+                  border: Border.all(
+                    color: Colors.green.withValues(alpha: 0.3),
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Cleaned',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      change.cleaned,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 8),
-              Text(change.cleaned),
-            ],
-          ),
+            ),
+          ],
         ),
 
         const SizedBox(height: 16),
@@ -665,6 +839,28 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
           ],
         ),
       ],
+    );
+  }
+
+  // Build a phase chip with highlight when active
+  Widget _phaseChip(String phase, IconData icon, Color color) {
+    final bool active =
+        progressPhase == phase ||
+        (phase == 'complete' &&
+            (progress >= 0.99 || (_session?.status == 'review')));
+    return Chip(
+      avatar: Icon(icon, size: 16, color: active ? Colors.white : color),
+      label: Text(
+        phase[0].toUpperCase() + phase.substring(1),
+        style: TextStyle(
+          color: active ? Colors.white : Colors.white70,
+          fontWeight: active ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
+      backgroundColor: active ? color : color.withValues(alpha: 0.2),
+      shape: StadiumBorder(
+        side: BorderSide(color: color.withValues(alpha: 0.5)),
+      ),
     );
   }
 }

@@ -97,6 +97,9 @@ abstract class ApiService {
   /// Set the Gemini API key (for desktop)
   void setApiKey(String key);
 
+  /// Optional: set Basic Auth credentials (for web servers requiring auth)
+  void setAuth(String username, String password);
+
   /// Upload an EPUB file and create a processing session
   Future<ProcessingSession> uploadEpub(
     String filePath,
