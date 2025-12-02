@@ -17,6 +17,9 @@ ApiService createApiService({String? baseUrl, String? apiKey}) {
 
 class DesktopApiService implements ApiService {
   String _apiKey;
+  // Desktop does not use auth; method is a no-op to satisfy interface
+  @override
+  void setAuth(String username, String password) {}
   final Map<String, _LocalSession> _sessions = {};
   String? _scriptsDir;
 

@@ -3,8 +3,10 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:js_interop';
 
 import 'package:http/http.dart' as http;
+import 'package:web/web.dart' as web;
 
 import 'api_service.dart';
 
@@ -141,67 +143,43 @@ class WebApiService implements ApiService {
       final controller = StreamController<Map<String, dynamic>>.broadcast();
       _sseControllers[sessionId] = controller;
 
-      // Start the actual SSE connection
+      // Start the actual SSE connection using browser's EventSource
       _connectSSE(sessionId, controller);
     }
     return _sseControllers[sessionId]!.stream;
   }
 
-  /// Connect to SSE endpoint and feed events to the controller
-  Future<void> _connectSSE(
+  /// Connect to SSE endpoint using browser's EventSource API
+  void _connectSSE(
     String sessionId,
     StreamController<Map<String, dynamic>> controller,
-  ) async {
-    final uri = Uri.parse('$_baseUrl/api/logs/$sessionId');
-    final client = http.Client();
+  ) {
+    final url = '$_baseUrl/api/logs/$sessionId';
+    final eventSource = web.EventSource(url);
 
-    try {
-      final request = http.Request('GET', uri);
-      if (_authHeader != null) {
-        request.headers['Authorization'] = _authHeader!;
-      }
+    eventSource.onmessage = (web.MessageEvent event) {
+      try {
+        final dataString = (event.data as JSString?)?.toDart ?? '';
+        final data = json.decode(dataString) as Map<String, dynamic>;
+        controller.add(data);
 
-      final response = await client.send(request);
-
-      String buffer = '';
-      await for (final chunk in response.stream.transform(utf8.decoder)) {
-        buffer += chunk;
-
-        // Parse SSE events
-        while (buffer.contains('\n\n')) {
-          final eventEnd = buffer.indexOf('\n\n');
-          final eventStr = buffer.substring(0, eventEnd);
-          buffer = buffer.substring(eventEnd + 2);
-
-          for (final line in eventStr.split('\n')) {
-            if (line.startsWith('data: ')) {
-              try {
-                final data =
-                    json.decode(line.substring(6)) as Map<String, dynamic>;
-                controller.add(data);
-
-                // Check if done
-                if (data['type'] == 'done') {
-                  await controller.close();
-                  _sseControllers.remove(sessionId);
-                  return;
-                }
-              } catch (e) {
-                // Ignore parse errors
-              }
-            }
-          }
+        // Check if done
+        if (data['type'] == 'done') {
+          eventSource.close();
+          controller.close();
+          _sseControllers.remove(sessionId);
         }
+      } catch (e) {
+        // Ignore parse errors
       }
-    } catch (e) {
-      controller.addError(e);
-    } finally {
-      client.close();
-      if (!controller.isClosed) {
-        await controller.close();
-      }
+    }.toJS;
+
+    eventSource.onerror = (web.Event event) {
+      eventSource.close();
+      controller.addError(Exception('SSE connection error'));
+      controller.close();
       _sseControllers.remove(sessionId);
-    }
+    }.toJS;
   }
 
   @override

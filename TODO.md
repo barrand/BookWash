@@ -6,6 +6,7 @@
 ✅ Requirements and testing framework documented
 
 ## Next Steps
+- Add UI for a double pass. Makes the process take longer. Have Ollama check the work after Gemini is done and check to see if it passes
 
 ### Phase 1: EPUB Parsing & Writing
 - [ ] **Add EPUB dependencies to pubspec.yaml**

@@ -8,3 +8,18 @@ ApiService createApiService({String? baseUrl, String? apiKey}) {
     'Cannot create ApiService without platform-specific implementation',
   );
 }
+
+// Provide a minimal class to satisfy interface lookups when stub is referenced
+abstract class ApiServiceBase implements ApiService {
+  @override
+  bool get requiresBackendUrl => true;
+
+  @override
+  void setBackendUrl(String url) {}
+
+  @override
+  void setApiKey(String key) {}
+
+  @override
+  void setAuth(String username, String password) {}
+}
