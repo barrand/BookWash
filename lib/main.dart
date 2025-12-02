@@ -883,11 +883,10 @@ class _BookWashHomeState extends State<BookWashHome> {
                         _saveLevel('profanity_level', v);
                       },
                       [
-                        '1 - G Rated: No profanity or crude language (Most censorship)',
-                        '2 - PG Rated: Mild language allowed (Heavy censorship)',
-                        '3 - PG-13 Rated: Some strong language (Light censorship)',
-                        '4 - R Rated: Strong language allowed (Censorship of F word only)',
-                        '5 - Unrated: Everything allowed (No censorship)',
+                        '1 - G: No profanity or crude language • Modifies PG and above',
+                        '2 - PG: Mild language allowed • Modifies PG-13 and above',
+                        '3 - PG-13: Some strong language • Modifies R-rated content only',
+                        '4 - Unfiltered: No modifications',
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -900,11 +899,10 @@ class _BookWashHomeState extends State<BookWashHome> {
                         _saveLevel('sexual_level', v);
                       },
                       [
-                        '1 - G Rated: No adult content allowed (Most censorship)',
-                        '2 - PG Rated: Light romance only (Heavy censorship)',
-                        '3 - PG-13 Rated: Romantic scenes allowed (Light censorship)',
-                        '4 - R Rated: Suggestive content allowed (Censorship of X rated content only)',
-                        '5 - Unrated: Everything allowed (No censorship)',
+                        '1 - G: No adult content allowed • Modifies PG and above',
+                        '2 - PG: Light romance only • Modifies PG-13 and above',
+                        '3 - PG-13: Romantic scenes allowed • Modifies R-rated content only',
+                        '4 - Unfiltered: No modifications',
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -917,11 +915,10 @@ class _BookWashHomeState extends State<BookWashHome> {
                         _saveLevel('violence_level', v);
                       },
                       [
-                        '1 - G Rated: No violence (Most censorship)',
-                        '2 - PG Rated: Mild conflict only (Heavy censorship)',
-                        '3 - PG-13 Rated: Action/combat allowed (Light censorship)',
-                        '4 - R Rated: Intense violence allowed (Censorship of intense gore only)',
-                        '5 - Unrated: Everything allowed (No censorship)',
+                        '1 - G: No violence • Modifies PG and above',
+                        '2 - PG: Mild conflict only • Modifies PG-13 and above',
+                        '3 - PG-13: Action/combat allowed • Modifies R-rated content only',
+                        '4 - Unfiltered: No modifications',
                       ],
                     ),
                   ],
@@ -1623,8 +1620,8 @@ class _BookWashHomeState extends State<BookWashHome> {
         Slider(
           value: currentValue.toDouble(),
           min: 1,
-          max: 5,
-          divisions: 4,
+          max: 4,
+          divisions: 3,
           label: ratingName,
           onChanged: onChanged,
         ),

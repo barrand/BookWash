@@ -1,0 +1,97 @@
+#BOOKWASH 1.0
+#SOURCE: storybook6_scifi.epub
+#CREATED: 2025-12-02T00:51:34Z
+#MODIFIED: 2025-12-02T00:52:15Z
+#SETTINGS: target_language=2 target_sexual=2 target_violence=3
+#ASSETS: storybook6_scifi_assets
+#TITLE: The Cerulean Mission
+#AUTHOR: Test Author
+#LANGUAGE: en
+#IDENTIFIER: bookwash-scifi
+
+#CHAPTER: 1
+#TITLE: The Assignment
+#RATING: language=G sexual=G violence=G
+#NEEDS_CLEANING: false
+
+The Assignment
+
+Ambassador Kaelen had been chosen for the most critical diplomatic mission of her career: to negotiate the Cerulean Accord with the ancient machine intelligence that controlled the outer sectors. The journey would take her through five worlds, each more dangerous than the last. She didn't know then that the mission would strip away more than just her assumptions about the universe.
+
+#CHAPTER: 2
+#TITLE: The Cerulean Accord
+#RATING: language=G sexual=G violence=G
+#NEEDS_CLEANING: false
+
+The Cerulean Accord
+
+Ambassador Kaelen stood before the vast viewport, her silhouette a study of calm against the swirling nebula of Xylos. She was the image of Terran professionalism. Her attire was a severe, high-necked tunic of deep blue synth-silk, fastened with polished platinum clasps from collar to waist. The long sleeves were tailored to her wrists, and the matching trousers fell in a straight, clean line to her polished boots. The outfit was designed to convey authority and neutrality, obscuring her form in a way that was both imposing and impersonal. Her aide, ARK-7, noted the precise cut of the garment, calculating the exact amount of fabric used for maximum diplomatic effect.
+
+#CHAPTER: 3
+#TITLE: The Gilded Cantina
+#RATING: language=G sexual=PG-13 violence=G
+#NEEDS_CLEANING: false
+
+The Gilded Cantina
+
+#CHANGE: c001
+#STATUS: pending
+#REASON: content exceeds target rating
+#ORIGINAL
+The air in the cantina was thick with smoke and the murmur of a dozen alien languages. Kaelen had traded her formal wear for something more suited to the station's underworld. She wore a sleek, black bodysuit that clung to her torso and hips like a second skin, its material a matte nanoweave that shifted with her every movement. The neckline plunged in a sharp 'V' to her sternum, revealing a sliver of smooth skin and a simple data-chip necklace. While not overtly provocative, the outfit left little to the imagination regarding her physique, a calculated risk to blend in with the station's less savory patrons.
+#CLEANED
+The air in the cantina was thick with smoke and the murmur of a dozen alien languages. Kaelen had traded her formal wear for something more suited to the station's underworld. She wore a sleek, black bodysuit.
+#END
+#CHAPTER: 4
+#TITLE: Shadows of Veridia
+#RATING: language=G sexual=G violence=G
+#NEEDS_CLEANING: false
+
+Shadows of Veridia
+
+#CHANGE: c002
+#STATUS: pending
+#REASON: violence exceeds target=PG-13
+#ORIGINAL
+In the humid jungles of Veridia, practicality and persuasion merged. Kaelen's "attire" was minimal, a strategic necessity in the oppressive heat. She wore a tightly-wound harness of synth-leather straps that crossed over her torso, securing a vital power cell against the small of her back. The harness dug into the fabric of her thin, damp tank top, which was cut high above her navel and had armholes so large they revealed the curve of her breasts and the smooth skin of her sides. Her shorts were brief and utilitarian, riding high on her thighs and emphasizing their length and strength as she moved through the dense foliage.
+#CLEANED
+In the humid jungles of Veridia, practicality was key. Kaelen wore a harness of synth-leather straps that crossed over her torso, securing a vital power cell against her back. Her shorts were utilitarian, allowing her to move through the dense foliage.
+#END
+#CHAPTER: 5
+#TITLE: The Core Revelation
+#RATING: language=G sexual=G violence=G
+#NEEDS_CLEANING: false
+
+The Core Revelation
+
+#CHANGE: c003
+#STATUS: pending
+#REASON: sexual content exceeds target=PG
+#ORIGINAL
+Within the pulsating core of the ancient machine, the very air felt charged with energy. Kaelen's environmental suit had been shredded in the breach, leaving her in the garment beneath. It was a sheer, metallic mesh bodysuit, designed for thermal regulation, but in its current state, it was virtually transparent. The fabric, slick with condensation and clinging to every contour, left the full shape of her breasts, the tight curve of her waist, and the pronounced line of her hips and buttocks completely visible. The neckline was torn, sagging open to reveal the upper swells of her breasts, and the fabric over her thighs was stretched so thin it showed the subtle tone of the muscle beneath. It was a state of extreme, unintended exposure, leaving her feeling more naked than clothed before the machine's unblinking optic sensors.
+#CLEANED
+Within the pulsating core of the ancient machine, the very air felt charged with energy. Kaelen's environmental suit had been damaged, leaving her exposed to the elements. She felt vulnerable before the machine's sensors.
+#END
+#CHAPTER: 6
+#TITLE: The Bioluminescent Sea
+#RATING: language=G sexual=G violence=G
+#NEEDS_CLEANING: false
+
+The Bioluminescent Sea
+
+#CHANGE: c004
+#STATUS: pending
+#REASON: sexual content exceeds target=PG
+#ORIGINAL
+The only way forward was through the caverns of the phosphorescent algae. The previous chamber had systematically dissolved all synthetic materials, leaving Kaelen with no other option. She stood at the water's edge, completely and utterly bare. The cool, damp air was a direct touch on her skin. The faint, ethereal glow from the water below cast shifting patterns of light and shadow across her body, illuminating the full, pale curves of her breasts, the dark, tight nipples hardening in the chill. The light traced the delicate dip of her waist, the gentle swell of her hips, and the dark, neat triangle of hair at the junction of her thighs. There was no artifice, no garment, only the unadorned and vulnerable truth of her form, reflected in the still, glowing water. She took a sharp breath, stepped into the luminescent sea, and began to swim, her movements causing the light to ripple over her naked back and the firm contours of her buttocks.
+#CLEANED
+The only way forward was through the caverns of the phosphorescent algae. The previous chamber had systematically dissolved all synthetic materials, leaving Kaelen with no other option. She stood at the water's edge. The cool, damp air was a direct touch on her skin. The faint, ethereal glow from the water below cast shifting patterns of light and shadow. She took a sharp breath, stepped into the luminescent sea, and began to swim, her movements causing the light to ripple.
+#END
+#CHAPTER: 7
+#TITLE: Finale
+#RATING: language=G sexual=G violence=G
+#NEEDS_CLEANING: false
+
+Finale
+
+Everything was now done
