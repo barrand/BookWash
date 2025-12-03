@@ -152,7 +152,64 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
         _addLog('✅ Session loaded (already complete)');
       }
     } catch (e) {
-      _addLog('⚠️  Could not resume session: $e');
+      final msg = e.toString();
+      // If auth required, prompt credentials and retry once
+      if (msg.contains('401') || msg.contains('Authentication')) {
+        final creds = await _promptForCredentials(context);
+        if (creds != null) {
+          _api.setAuth(creds.$1, creds.$2);
+          try {
+            final session = await _api.getSession(sessionId);
+            setState(() {
+              _session = session;
+              selectedFileName = session.filename;
+            });
+
+            if (session.status == 'processing') {
+              _addLog('📡 Resuming session...');
+              setState(() {
+                isProcessing = true;
+                progress = session.progress / 100;
+                progressPhase = session.phase;
+              });
+
+              final logSub = _api.streamLogs(sessionId).listen((log) {
+                _addLog(log.message);
+              });
+              final statusSub = _api.streamStatus(sessionId).listen((status) {
+                setState(() {
+                  progress = status.progress / 100;
+                  progressPhase = status.phase;
+                  _session = status;
+                });
+              });
+
+              await statusSub.asFuture<void>().catchError((_) {});
+              await logSub.cancel();
+
+              final finalSession = await _api.getSession(sessionId);
+              setState(() {
+                _session = finalSession;
+                isProcessing = false;
+                currentChangeIndex = 0;
+              });
+            } else if (session.status == 'review' ||
+                session.status == 'complete') {
+              setState(() {
+                progress = 1.0;
+                progressPhase = 'complete';
+                currentChangeIndex = 0;
+              });
+              _addLog('✅ Session loaded (already complete)');
+            }
+            return;
+          } catch (e2) {
+            _addLog('❌ Resume failed after auth: $e2');
+          }
+        }
+      } else {
+        _addLog('⚠️  Could not resume session: $e');
+      }
     }
   }
 
@@ -237,9 +294,9 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
         progressPhase = 'processing';
       });
 
-      // Update URL to include session ID
+      // Update URL to include session ID (respect current path for subpaths)
       final newUrl =
-          '${web.window.location.origin}/?session=${session.sessionId}';
+          '${web.window.location.pathname}?session=${session.sessionId}';
       web.window.history.pushState(null, '', newUrl);
 
       _addLog('✅ File uploaded');
