@@ -22,7 +22,7 @@ void main() {
     final tempFile = File('${tempDir.path}/test.epub');
     await tempFile.writeAsBytes(archiveBytes);
 
-    // 4. Run the parser on our mock EPUB file.
+    // 4. Run the parser on our mock EPUB file.R
     final parsedEpub = await EpubParser.parseEpub(tempFile.path);
 
     // 5. Assert that the content was decoded correctly.

@@ -1,0 +1,16 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: bookwash
+    runtime: python
+    plan: free
+    buildCommand: pip install -r webapp/requirements.txt
+    startCommand: cd webapp && uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false  # Prompt for value during setup
+      - key: APP_PASSWORD
+        sync: false  # Optional: prompt for value
+      - key: PYTHON_VERSION
+        value: 3.11.0

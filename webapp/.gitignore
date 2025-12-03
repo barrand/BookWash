@@ -43,20 +43,3 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-
-# Stories/test content
-stories/
-
-# Test harness output
-test_output/
-
-# Temporary session files and uploads
-webapp/sessions/
-*_assets/
-*.epub
-*.bookwash
-
-# Python temp files
-__pycache__/
-*.py[cod]
-*$py.class
