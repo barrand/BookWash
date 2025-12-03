@@ -53,6 +53,8 @@ app.add_middleware(
 
 # In-memory session storage (for live logs and state)
 sessions: Dict[str, Dict[str, Any]] = {}
+# Track background processing tasks by session_id
+processing_tasks: Dict[str, asyncio.Task] = {}
 
 @app.on_event("startup")
 async def startup_event():
@@ -325,6 +327,8 @@ async def process_book_async(
     if not session:
         return
     
+    process = None  # Track subprocess for cancellation
+    
     def add_log(message: str):
         session["logs"].append({
             "time": datetime.now().isoformat(),
@@ -396,11 +400,14 @@ async def process_book_async(
             env=env
         )
         
+        # Store process in session for cancellation
+        session["process_pid"] = process.pid
+        
         add_log(f"⏱️ Using model: {model}")
         
         # Stream output to logs (async) with heartbeat if quiet
         last_output = time.time()
-        HEARTBEAT_SECONDS = 10
+        HEARTBEAT_SECONDS = 30
         while True:
             try:
                 line_bytes = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
@@ -782,9 +789,20 @@ async def delete_session(
     session_id: str,
     authenticated: bool = Depends(verify_credentials)
 ):
-    """Clean up a session and its files."""
+    """Clean up a session and its files. Cancel any running processing."""
     if session_id in sessions:
         session = sessions[session_id]
+        
+        # Kill background processing if running
+        if session.get("process_pid"):
+            try:
+                import signal
+                os.kill(session["process_pid"], signal.SIGTERM)
+                print(f"Killed process {session['process_pid']} for session {session_id}")
+            except ProcessLookupError:
+                pass  # Process already finished
+            except Exception as e:
+                print(f"Error killing process: {e}")
         
         # Clean up files
         if session.get("epub_path"):

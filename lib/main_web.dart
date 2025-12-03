@@ -450,6 +450,49 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
     });
   }
 
+  Future<void> _cancelProcessing() async {
+    if (_session == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel Processing?'),
+        content: const Text(
+          'This will stop processing the book. Progress will be lost.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Continue Processing'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Cancel Book'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await _api.deleteSession(_session!.sessionId);
+        setState(() {
+          isProcessing = false;
+          _session = null;
+          selectedFileName = null;
+          selectedFileBytes = null;
+          logs.clear();
+          progress = 0;
+          progressPhase = '';
+        });
+        _addLog('❌ Processing cancelled by user');
+      } catch (e) {
+        _addLog('⚠️  Cancel failed: $e');
+      }
+    }
+  }
+
   Future<void> _rejectChange(ChangeItem change) async {
     if (_session == null) return;
 
@@ -642,7 +685,22 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (isProcessing) ...[
-                          LinearProgressIndicator(value: progress),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: LinearProgressIndicator(value: progress),
+                              ),
+                              const SizedBox(width: 12),
+                              TextButton.icon(
+                                onPressed: _cancelProcessing,
+                                icon: const Icon(Icons.cancel, size: 20),
+                                label: const Text('Cancel'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.red,
+                                ),
+                              ),
+                            ],
+                          ),
                           const SizedBox(height: 8),
                           Text(
                             'Phase: $progressPhase • ${(progress * 100).toInt()}%',
