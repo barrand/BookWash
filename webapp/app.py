@@ -53,6 +53,28 @@ app.add_middleware(
 # In-memory session storage (for live logs and state)
 sessions: Dict[str, Dict[str, Any]] = {}
 
+def save_session_to_disk(session_id: str):
+    """Persist session state to disk."""
+    if session_id not in sessions:
+        return
+    session = sessions[session_id]
+    session_file = SESSIONS_DIR / session_id / "session.json"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Don't serialize file handles or other non-JSON types
+    serializable = {
+        k: v for k, v in session.items() 
+        if k not in ["file_handle"] and isinstance(v, (str, int, float, bool, list, dict, type(None)))
+    }
+    session_file.write_text(json.dumps(serializable, indent=2))
+
+def load_session_from_disk(session_id: str) -> Optional[Dict[str, Any]]:
+    """Load session state from disk."""
+    session_file = SESSIONS_DIR / session_id / "session.json"
+    if session_file.exists():
+        return json.loads(session_file.read_text())
+    return None
+
 # Basic auth security (optional)
 security = HTTPBasic(auto_error=False)
 
@@ -161,6 +183,7 @@ async def upload_epub(
         "changes": [],
         "created": datetime.now().isoformat()
     }
+    save_session_to_disk(session_id)
     
     return {
         "session_id": session_id,
@@ -183,8 +206,13 @@ async def start_processing(
     Start processing an uploaded EPUB. 
     Progress can be monitored via /api/logs/{session_id} SSE endpoint.
     """
+    # Load from disk if not in memory
     if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
+        loaded = load_session_from_disk(session_id)
+        if loaded:
+            sessions[session_id] = loaded
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
     
     session = sessions[session_id]
     
@@ -237,6 +265,9 @@ async def process_book_async(
             "time": datetime.now().isoformat(),
             "message": message
         })
+        # Persist every 10 logs
+        if len(session["logs"]) % 10 == 0:
+            save_session_to_disk(session_id)
     
     try:
         epub_path = Path(session["epub_path"])
@@ -253,6 +284,7 @@ async def process_book_async(
         add_log("═══════════════════════════════════════════")
         session["phase"] = "converting"
         session["progress"] = 5
+        save_session_to_disk(session_id)
         
         result = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "epub_to_bookwash.py"),
@@ -279,6 +311,7 @@ async def process_book_async(
         
         session["phase"] = "rating"
         session["progress"] = 10
+        save_session_to_disk(session_id)
         
         # Run the LLM script and capture output line by line (async)
         env = os.environ.copy()
@@ -352,6 +385,7 @@ async def process_book_async(
         session["progress"] = 100
         session["phase"] = "complete"
         session["status"] = "review"
+        save_session_to_disk(session_id)
         
         add_log("")
         add_log("═══════════════════════════════════════════")
@@ -360,9 +394,15 @@ async def process_book_async(
         add_log("Review changes below, then export when ready.")
         
     except Exception as e:
+        import traceback
+        error_detail = f"{str(e)}\n{traceback.format_exc()}"
         add_log(f"❌ Error: {str(e)}")
+        add_log(f"Traceback: {traceback.format_exc()}")
         session["status"] = "error"
-        session["error"] = str(e)
+        session["error"] = error_detail
+        session["progress"] = session.get("progress", 0)  # Keep last progress
+        session["phase"] = session.get("phase", "error")
+        save_session_to_disk(session_id)
 
 
 def parse_bookwash_changes(bookwash_path: str) -> list:
@@ -447,8 +487,13 @@ async def stream_logs(session_id: str, request: Request):
     """
     Stream logs for a session using Server-Sent Events (SSE).
     """
+    # Load from disk if not in memory
     if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
+        loaded = load_session_from_disk(session_id)
+        if loaded:
+            sessions[session_id] = loaded
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
     
     async def event_generator():
         last_log_count = 0
@@ -501,8 +546,13 @@ async def get_session(
     authenticated: bool = Depends(verify_credentials)
 ):
     """Get the current state of a session."""
+    # Try memory first, then disk
     if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
+        loaded = load_session_from_disk(session_id)
+        if loaded:
+            sessions[session_id] = loaded
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
     
     session = sessions[session_id]
     return {
