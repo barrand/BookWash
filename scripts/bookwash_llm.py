@@ -72,11 +72,10 @@ LEVEL_TO_RATING = {
     5: 'X',
 }
 
-DEFAULT_MODEL = 'gemini-1.5-flash'
+DEFAULT_MODEL = 'gemini-2.0-flash'
 FALLBACK_MODELS = [
-    'gemini-2.0-flash-exp',    # Experimental flash
-    'gemini-2.0-flash',        # Stable flash - fast  
-    'gemini-2.0-flash-lite',   # Lite version - fastest
+    'gemini-1.5-flash',   # Fallback when 2.0 hits rate limit
+    'gemini-2.0-flash',   # Retry 2.0 after 1.5 hits limit (ping-pong)
 ]
 API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 
@@ -412,14 +411,21 @@ class GeminiClient:
         self.consecutive_429s = 0
     
     def _switch_to_fallback(self):
-        """Switch to next fallback model after rate limiting."""
+        """Switch to next fallback model after rate limiting (cycles through list)."""
         if self.fallback_index < len(FALLBACK_MODELS):
             old_model = self.current_model
             self.current_model = FALLBACK_MODELS[self.fallback_index]
             self.fallback_index += 1
             print(f"  ⚡ Switching model: {old_model} → {self.current_model}")
             return True
-        return False
+        else:
+            # Wrap around to start cycling again
+            self.fallback_index = 0
+            old_model = self.current_model
+            self.current_model = FALLBACK_MODELS[0]
+            self.fallback_index = 1
+            print(f"  ⚡ Cycling model: {old_model} → {self.current_model}")
+            return True
     
     def _reset_to_primary(self):
         """Reset to primary model."""
