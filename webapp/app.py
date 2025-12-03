@@ -396,13 +396,27 @@ async def process_book_async(
             env=env
         )
         
-        # Stream output to logs (async)
+        add_log(f"⏱️ Using model: {model}")
+        
+        # Stream output to logs (async) with heartbeat if quiet
+        last_output = time.time()
+        HEARTBEAT_SECONDS = 10
         while True:
-            line_bytes = await process.stdout.readline()
+            try:
+                line_bytes = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
+            except asyncio.TimeoutError:
+                # No output in the last second; send heartbeat if quiet long enough
+                if time.time() - last_output >= HEARTBEAT_SECONDS:
+                    add_log("⏳ Heartbeat: waiting on Gemini API response...")
+                    last_output = time.time()
+                # Continue looping
+                continue
+            
             if not line_bytes:
                 break
             line = line_bytes.decode().rstrip()
             if line:
+                last_output = time.time()
                 add_log(line)
                 
                 # Parse progress from output
