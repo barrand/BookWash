@@ -420,6 +420,7 @@ async def process_book_async(
                 add_log(line)
                 
                 # Parse progress from output
+                progress_changed = False
                 if "[" in line and "/" in line and "]" in line:
                     try:
                         match = line.split("[")[1].split("]")[0]
@@ -428,18 +429,26 @@ async def process_book_async(
                         if "Rating" in session.get("phase", "") or session["progress"] < 50:
                             session["phase"] = "rating"
                             session["progress"] = 10 + int(progress_pct * 40)
+                            progress_changed = True
                         else:
                             session["phase"] = "cleaning"
                             session["progress"] = 50 + int(progress_pct * 45)
+                            progress_changed = True
                     except:
                         pass
                 
                 if "Cleaning" in line and "chapters" in line:
                     session["phase"] = "cleaning"
                     session["progress"] = 50
+                    progress_changed = True
                 elif "No chapters need cleaning" in line:
                     session["phase"] = "cleaning"
                     session["progress"] = 95
+                    progress_changed = True
+                
+                # Save on progress changes to survive restarts
+                if progress_changed:
+                    save_session_to_disk(session_id)
         
         await process.wait()
         
