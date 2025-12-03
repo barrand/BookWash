@@ -80,12 +80,80 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
     // Set backend URL from current location (same origin)
     final origin = web.window.location.origin;
     _api.setBackendUrl(origin);
+
+    // Check URL for session parameter and auto-resume
+    _checkAndResumeSession();
   }
 
   @override
   void dispose() {
     _logScrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkAndResumeSession() async {
+    // Parse URL query params
+    final search = web.window.location.search;
+    if (search.isEmpty || !search.contains('session=')) return;
+
+    final params = Uri.parse(web.window.location.href).queryParameters;
+    final sessionId = params['session'];
+    if (sessionId == null || sessionId.isEmpty) return;
+
+    // Try to load the session
+    try {
+      final session = await _api.getSession(sessionId);
+      setState(() {
+        _session = session;
+        selectedFileName = session.filename;
+      });
+
+      // If still processing, resume SSE streams
+      if (session.status == 'processing') {
+        _addLog('📡 Resuming session...');
+        setState(() {
+          isProcessing = true;
+          progress = session.progress / 100;
+          progressPhase = session.phase;
+        });
+
+        // Stream logs
+        final logSub = _api.streamLogs(sessionId).listen((log) {
+          _addLog(log.message);
+        });
+
+        // Stream status
+        final statusSub = _api.streamStatus(sessionId).listen((status) {
+          setState(() {
+            progress = status.progress / 100;
+            progressPhase = status.phase;
+            _session = status;
+          });
+        });
+
+        // Wait for completion
+        await statusSub.asFuture<void>().catchError((_) {});
+        await logSub.cancel();
+
+        // Fetch final session
+        final finalSession = await _api.getSession(sessionId);
+        setState(() {
+          _session = finalSession;
+          isProcessing = false;
+          currentChangeIndex = 0;
+        });
+      } else if (session.status == 'review' || session.status == 'complete') {
+        // Already done, show review UI
+        setState(() {
+          progress = 1.0;
+          progressPhase = 'complete';
+          currentChangeIndex = 0;
+        });
+        _addLog('✅ Session loaded (already complete)');
+      }
+    } catch (e) {
+      _addLog('⚠️  Could not resume session: $e');
+    }
   }
 
   void _addLog(String message) {
@@ -168,6 +236,11 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
         _session = session;
         progressPhase = 'processing';
       });
+
+      // Update URL to include session ID
+      final newUrl =
+          '${web.window.location.origin}/?session=${session.sessionId}';
+      web.window.history.pushState(null, '', newUrl);
 
       _addLog('✅ File uploaded');
 

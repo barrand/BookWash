@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Allow Flutter web build to be committed for Render deploy
+!build/web
+!build/web/**
+
 # Symbolication related
 app.*.symbols
 

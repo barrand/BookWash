@@ -19,7 +19,8 @@ import subprocess
 import shutil
 from pathlib import Path
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse, Response
@@ -53,6 +54,12 @@ app.add_middleware(
 # In-memory session storage (for live logs and state)
 sessions: Dict[str, Dict[str, Any]] = {}
 
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on app startup."""
+    asyncio.create_task(cleanup_old_sessions())
+    print("🚀 BookWash started - session cleanup task running (14 day retention)")
+
 def save_session_to_disk(session_id: str):
     """Persist session state to disk."""
     if session_id not in sessions:
@@ -74,6 +81,60 @@ def load_session_from_disk(session_id: str) -> Optional[Dict[str, Any]]:
     if session_file.exists():
         return json.loads(session_file.read_text())
     return None
+
+def update_session_access(session_id: str):
+    """Update last_accessed timestamp for a session."""
+    if session_id in sessions:
+        sessions[session_id]["last_accessed"] = time.time()
+        save_session_to_disk(session_id)
+
+async def cleanup_old_sessions():
+    """Background task to clean up sessions older than 14 days with no activity."""
+    RETENTION_DAYS = 14
+    CLEANUP_INTERVAL_SECONDS = 86400  # 24 hours
+    
+    while True:
+        try:
+            await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+            
+            cutoff_time = time.time() - (RETENTION_DAYS * 86400)
+            deleted_count = 0
+            
+            # Check all session directories on disk
+            if SESSIONS_DIR.exists():
+                for session_dir in SESSIONS_DIR.iterdir():
+                    if not session_dir.is_dir():
+                        continue
+                    
+                    session_id = session_dir.name
+                    session_file = session_dir / "session.json"
+                    
+                    if not session_file.exists():
+                        continue
+                    
+                    try:
+                        session_data = json.loads(session_file.read_text())
+                        last_accessed = session_data.get("last_accessed", session_data.get("created_at", 0))
+                        
+                        if last_accessed < cutoff_time:
+                            # Delete session directory
+                            shutil.rmtree(session_dir)
+                            
+                            # Remove from memory if present
+                            if session_id in sessions:
+                                del sessions[session_id]
+                            
+                            deleted_count += 1
+                            print(f"🗑️  Cleaned up inactive session: {session_id}")
+                    
+                    except Exception as e:
+                        print(f"⚠️  Error cleaning session {session_id}: {e}")
+            
+            if deleted_count > 0:
+                print(f"✅ Cleanup completed: {deleted_count} session(s) deleted (inactive > {RETENTION_DAYS} days)")
+        
+        except Exception as e:
+            print(f"❌ Error in cleanup task: {e}")
 
 # Basic auth security (optional)
 security = HTTPBasic(auto_error=False)
@@ -171,6 +232,7 @@ async def upload_epub(
         f.write(content)
     
     # Initialize session state
+    now = time.time()
     sessions[session_id] = {
         "id": session_id,
         "filename": file.filename,
@@ -181,7 +243,9 @@ async def upload_epub(
         "progress": 0,
         "phase": "idle",
         "changes": [],
-        "created": datetime.now().isoformat()
+        "created": datetime.now().isoformat(),
+        "created_at": now,
+        "last_accessed": now
     }
     save_session_to_disk(session_id)
     
@@ -215,6 +279,7 @@ async def start_processing(
             raise HTTPException(status_code=404, detail="Session not found")
     
     session = sessions[session_id]
+    update_session_access(session_id)
     
     if session["status"] not in ["uploaded", "error"]:
         raise HTTPException(status_code=400, detail=f"Cannot process session in {session['status']} state")
@@ -495,6 +560,8 @@ async def stream_logs(session_id: str, request: Request):
         else:
             raise HTTPException(status_code=404, detail="Session not found")
     
+    update_session_access(session_id)
+    
     async def event_generator():
         last_log_count = 0
         
@@ -554,6 +621,8 @@ async def get_session(
         else:
             raise HTTPException(status_code=404, detail="Session not found")
     
+    update_session_access(session_id)
+    
     session = sessions[session_id]
     return {
         "id": session["id"],
@@ -576,6 +645,8 @@ async def update_change(
     """Accept or reject a specific change."""
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Session not found")
+    
+    update_session_access(session_id)
     
     if status not in ["accepted", "rejected"]:
         raise HTTPException(status_code=400, detail="Status must be 'accepted' or 'rejected'")
@@ -600,9 +671,11 @@ async def accept_all_changes(
     session_id: str,
     authenticated: bool = Depends(verify_credentials)
 ):
-    """Accept all pending changes."""
+    """Accept all pending changes at once."""
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Session not found")
+    
+    update_session_access(session_id)
     
     session = sessions[session_id]
     count = 0
@@ -643,9 +716,11 @@ async def export_epub(
     session_id: str,
     authenticated: bool = Depends(verify_credentials)
 ):
-    """Export the processed book as an EPUB."""
+    """Export the processed EPUB with accepted changes."""
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Session not found")
+    
+    update_session_access(session_id)
     
     session = sessions[session_id]
     
