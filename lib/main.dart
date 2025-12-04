@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -188,7 +189,7 @@ class _BookWashHomeState extends State<BookWashHome> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['epub'],
-      withData: true, // Important for web - loads bytes
+      withData: kIsWeb, // Only load bytes for web platform
     );
 
     print(
