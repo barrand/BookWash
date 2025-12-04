@@ -90,6 +90,10 @@ def update_session_access(session_id: str):
         sessions[session_id]["last_accessed"] = time.time()
         save_session_to_disk(session_id)
 
+def get_session_dir(session_id: str) -> Path:
+    """Helper to get the on-disk session directory."""
+    return SESSIONS_DIR / session_id
+
 async def cleanup_old_sessions():
     """Background task to clean up sessions older than 14 days with no activity."""
     RETENTION_DAYS = 14
@@ -258,6 +262,58 @@ async def upload_epub(
     }
 
 
+@app.get("/api/sessions")
+async def list_sessions(authenticated: bool = Depends(verify_credentials)):
+    """List all sessions available on disk with basic metadata."""
+    items = []
+    # Prefer in-memory sessions first
+    for s in sessions.values():
+        items.append({
+            "id": s.get("id"),
+            "filename": s.get("filename"),
+            "status": s.get("status"),
+            "progress": s.get("progress", 0),
+            "phase": s.get("phase", ""),
+            "created_at": s.get("created_at"),
+            "last_accessed": s.get("last_accessed"),
+            "epub_path": s.get("epub_path"),
+            "bookwash_path": s.get("bookwash_path")
+        })
+    
+    # Also include sessions persisted to disk that may not be in memory
+    if SESSIONS_DIR.exists():
+        for session_dir in SESSIONS_DIR.iterdir():
+            if not session_dir.is_dir():
+                continue
+            sid = session_dir.name
+            # Avoid duplicates for sessions already included from memory
+            if any(i.get("id") == sid for i in items):
+                continue
+            session_file = session_dir / "session.json"
+            if session_file.exists():
+                try:
+                    s = json.loads(session_file.read_text())
+                    items.append({
+                        "id": s.get("id", sid),
+                        "filename": s.get("filename"),
+                        "status": s.get("status"),
+                        "progress": s.get("progress", 0),
+                        "phase": s.get("phase", ""),
+                        "created_at": s.get("created_at"),
+                        "last_accessed": s.get("last_accessed"),
+                        "epub_path": s.get("epub_path"),
+                        "bookwash_path": s.get("bookwash_path")
+                    })
+                except Exception as e:
+                    # Skip unreadable sessions
+                    print(f"⚠️  Unable to read session {sid}: {e}")
+                    continue
+    
+    # Sort by last_accessed desc
+    items.sort(key=lambda x: x.get("last_accessed", 0) or 0, reverse=True)
+    return {"sessions": items}
+
+
 @app.post("/api/process/{session_id}")
 async def start_processing(
     session_id: str,
@@ -265,7 +321,7 @@ async def start_processing(
     target_language: int = Form(2),
     target_adult: int = Form(2),
     target_violence: int = Form(3),
-    model: str = Form("gemini-2.0-flash"),
+    model: str = Form("gemini-2.5-flash-lite"),
     authenticated: bool = Depends(verify_credentials)
 ):
     """
@@ -387,6 +443,9 @@ async def process_book_async(
         env["GEMINI_API_KEY"] = api_key
         env["PYTHONUNBUFFERED"] = "1"
         
+        # Determine number of workers (use environment variable or default to 3)
+        num_workers = int(os.environ.get("BOOKWASH_WORKERS", "3"))
+        
         process = await asyncio.create_subprocess_exec(
             sys.executable, "-u", str(SCRIPTS_DIR / "bookwash_llm.py"),
             "--rate", "--clean",
@@ -394,6 +453,8 @@ async def process_book_async(
             "--sexual", str(target_adult),
             "--violence", str(target_violence),
             "--model", model,
+            "--workers", str(num_workers),
+            "--output-dir", str(session_dir),
             str(bookwash_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -403,7 +464,8 @@ async def process_book_async(
         # Store process in session for cancellation
         session["process_pid"] = process.pid
         
-        add_log(f"⏱️ Using model: {model}")
+        add_log(f"⏱️ Using model: {model} ({num_workers} workers)")
+        add_log("")
         
         # Stream output to logs (async) with heartbeat if quiet
         last_output = time.time()
@@ -663,6 +725,43 @@ async def get_session(
         "changes": session.get("changes", []),
         "logs": session.get("logs", [])
     }
+
+
+@app.get("/api/session/{session_id}/download")
+async def download_bookwash(
+    session_id: str,
+    authenticated: bool = Depends(verify_credentials)
+):
+    """Download the `.bookwash` file for a given session, if present."""
+    # Try memory, then disk
+    session = sessions.get(session_id)
+    if not session:
+        loaded = load_session_from_disk(session_id)
+        if loaded:
+            sessions[session_id] = loaded
+            session = loaded
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
+    
+    update_session_access(session_id)
+    bookwash_path = session.get("bookwash_path")
+    if not bookwash_path:
+        # If no path in memory, see if file exists in session dir by convention
+        session_dir = get_session_dir(session_id)
+        if session_dir.exists():
+            # Choose first .bookwash file found
+            matches = list(session_dir.glob("*.bookwash"))
+            if matches:
+                bookwash_path = str(matches[0])
+                session["bookwash_path"] = bookwash_path
+                save_session_to_disk(session_id)
+    
+    if not bookwash_path or not Path(bookwash_path).exists():
+        raise HTTPException(status_code=404, detail="No bookwash file available")
+    
+    path = Path(bookwash_path)
+    filename = path.name
+    return FileResponse(path, media_type="text/plain", filename=filename)
 
 
 @app.post("/api/session/{session_id}/change/{change_id}")
