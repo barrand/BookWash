@@ -30,6 +30,7 @@ Environment:
 """
 
 import argparse
+import asyncio
 import functools
 import json
 import os
@@ -39,7 +40,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 # Force unbuffered output for real-time logging
 print = functools.partial(print, flush=True)
@@ -72,10 +73,10 @@ LEVEL_TO_RATING = {
     5: 'X',
 }
 
-DEFAULT_MODEL = 'gemini-2.0-flash'
+DEFAULT_MODEL = 'gemini-2.5-flash-lite'
 FALLBACK_MODELS = [
-    'gemini-1.5-flash',   # Fallback when 2.0 hits rate limit
-    'gemini-2.0-flash',   # Retry 2.0 after 1.5 hits limit (ping-pong)
+    'gemini-2.0-flash-lite',   # Fallback when 2.5 hits rate limit
+    'gemini-2.5-flash-lite',   # Retry 2.5 after 2.0 hits limit (ping-pong)
 ]
 API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 
@@ -393,7 +394,111 @@ def write_bookwash(bw: BookWashFile, filepath: Path):
         for content_line in chapter.content_lines:
             lines.append(content_line)
     
-    filepath.write_text('\n'.join(lines), encoding='utf-8')
+    # Atomic write: write to temp file, then rename
+    temp_path = filepath.with_suffix('.tmp')
+    temp_path.write_text('\n'.join(lines), encoding='utf-8')
+    temp_path.rename(filepath)
+
+
+def write_chapter_bookwash(chapter: Chapter, filepath: Path, settings: dict = None):
+    """Write a single chapter to a per-chapter .bookwash file."""
+    lines = []
+    
+    # Write minimal settings if provided
+    if settings:
+        lines.append('#SETTINGS')
+        for key, value in settings.items():
+            lines.append(f'{key}={value}')
+        lines.append('')
+    
+    # Write chapter
+    lines.append(f'#CHAPTER: {chapter.number}')
+    
+    if chapter.title:
+        lines.append(f'#TITLE: {chapter.title}')
+    
+    if chapter.rating:
+        lines.append(f'#RATING: language={chapter.rating.language} sexual={chapter.rating.sexual} violence={chapter.rating.violence}')
+    
+    if chapter.needs_cleaning is not None:
+        lines.append(f'#NEEDS_CLEANING: {"true" if chapter.needs_cleaning else "false"}')
+    
+    # Write content
+    for content_line in chapter.content_lines:
+        lines.append(content_line)
+    
+    # Atomic write
+    temp_path = filepath.with_suffix('.tmp')
+    temp_path.write_text('\n'.join(lines), encoding='utf-8')
+    temp_path.rename(filepath)
+
+
+def parse_chapter_bookwash(filepath: Path) -> Chapter:
+    """Parse a single-chapter .bookwash file."""
+    content = filepath.read_text(encoding='utf-8')
+    lines = content.split('\n')
+    
+    chapter = None
+    in_settings = False
+    
+    for line in lines:
+        if line.startswith('#SETTINGS'):
+            in_settings = True
+            continue
+        
+        if in_settings:
+            if line.strip() == '':
+                in_settings = False
+            continue
+        
+        if line.startswith('#CHAPTER:'):
+            chapter_num = int(line.split(':')[1].strip())
+            chapter = Chapter(number=chapter_num)
+            continue
+        
+        if chapter is None:
+            continue
+        
+        if line.startswith('#TITLE:'):
+            chapter.title = line.split(':', 1)[1].strip()
+        elif line.startswith('#RATING:'):
+            rating_str = line.split(':', 1)[1].strip()
+            parts = {}
+            for part in rating_str.split():
+                key, val = part.split('=')
+                parts[key] = val
+            chapter.rating = ChapterRating(
+                language=parts.get('language', 'G'),
+                sexual=parts.get('sexual', 'G'),
+                violence=parts.get('violence', 'G')
+            )
+        elif line.startswith('#NEEDS_CLEANING:'):
+            val = line.split(':')[1].strip().lower()
+            chapter.needs_cleaning = (val == 'true')
+        else:
+            chapter.content_lines.append(line)
+    
+    return chapter
+
+
+def merge_chapter_files(session_dir: Path, master_path: Path, settings: dict):
+    """Merge per-chapter .bookwash files back into master file."""
+    chapter_files = sorted(session_dir.glob('ch_*.bookwash'))
+    
+    if not chapter_files:
+        return
+    
+    bw = BookWashFile()
+    bw.settings = settings.copy()
+    
+    for ch_file in chapter_files:
+        try:
+            chapter = parse_chapter_bookwash(ch_file)
+            bw.chapters.append(chapter)
+        except Exception as e:
+            print(f"⚠️  Error loading {ch_file.name}: {e}")
+    
+    write_bookwash(bw, master_path)
 
 
 # --- Gemini API ---
@@ -1597,6 +1702,265 @@ def cmd_clean(bw: BookWashFile, client: GeminiClient, verbose: bool = False,
     return total_changes
 
 
+async def worker_clean_chapter(
+    worker_id: int,
+    chapter: Chapter,
+    client: GeminiClient,
+    target_lang: int,
+    target_sexual: int,
+    target_violence: int,
+    max_iterations: int,
+    verbose: bool,
+    log_callback: Optional[Callable[[str], None]] = None
+) -> int:
+    """
+    Async worker to clean a single chapter using Pass B-C with verification.
+    Returns number of changes made.
+    """
+    def log(msg: str):
+        if log_callback:
+            log_callback(msg)
+        else:
+            print(msg)
+    
+    title_str = f" ({chapter.title})" if chapter.title else ""
+    log(f"[Worker {worker_id}] Chapter {chapter.number}{title_str}: Starting...")
+    
+    start_time = time.time()
+    total_changes = 0
+    iteration = 0
+    
+    while iteration < max_iterations:
+        iteration += 1
+        
+        # Calculate aggression based on iteration
+        is_strict_target = target_lang <= 2 or target_sexual <= 2
+        if iteration == 1:
+            aggression = 1
+        elif iteration == 2:
+            aggression = 2 if is_strict_target else 1
+        else:
+            aggression = 3 if is_strict_target else 2
+        
+        agg_str = {1: "", 2: " [aggressive]", 3: " [VERY aggressive]"}.get(aggression, "")
+        log(f"[Worker {worker_id}] Chapter {chapter.number}: Pass {iteration}{agg_str}")
+        
+        if iteration == 1:
+            # First pass: identify problematic paragraphs from ORIGINAL
+            paragraphs = chapter.get_paragraphs_for_cleaning()
+            if not paragraphs:
+                log(f"[Worker {worker_id}] Chapter {chapter.number}: Empty chapter")
+                break
+            
+            # Rate chunks to find problematic paragraphs
+            flagged_indices = set()
+            chunk_size = 3
+            
+            for chunk_idx in range((len(paragraphs) + chunk_size - 1) // chunk_size):
+                start = chunk_idx * chunk_size
+                end = min(start + chunk_size, len(paragraphs))
+                chunk = paragraphs[start:end]
+                
+                try:
+                    # Run synchronously in thread pool to avoid blocking
+                    await asyncio.sleep(0)  # Yield control
+                    needs_cleaning = client.rate_chunk(chunk, target_lang, target_sexual, target_violence)
+                    for idx in needs_cleaning:
+                        flagged_indices.add(start + idx)
+                except Exception as e:
+                    if verbose:
+                        log(f"[Worker {worker_id}] Chapter {chapter.number}: Error rating chunk: {e}")
+                    continue
+            
+            if flagged_indices:
+                log(f"[Worker {worker_id}] Chapter {chapter.number}: Found {len(flagged_indices)} problematic paragraphs")
+                
+                # Create change blocks for flagged paragraphs
+                new_content = []
+                global_change_id = 1
+                
+                for idx, para in enumerate(paragraphs):
+                    if idx in flagged_indices:
+                        # Create change block with empty CLEANED
+                        change_id = f"c{chapter.number}_{global_change_id:03d}"
+                        new_content.append('')
+                        new_content.append(f'#CHANGE: {change_id}')
+                        new_content.append('#STATUS: pending')
+                        reason = _infer_reason(para, target_lang, target_sexual, target_violence)
+                        new_content.append(f'#REASON: {reason}')
+                        new_content.append('#ORIGINAL')
+                        new_content.append(para)
+                        new_content.append('#CLEANED')
+                        new_content.append('')  # Empty - to be filled
+                        new_content.append('#END')
+                        global_change_id += 1
+                        total_changes += 1
+                    else:
+                        # Keep paragraph as-is
+                        new_content.append('')
+                        new_content.append(para)
+                
+                chapter.content_lines = new_content
+            else:
+                log(f"[Worker {worker_id}] Chapter {chapter.number}: No problematic content found")
+                break
+        
+        # Fill in cleaned versions for all unfilled changes
+        unfilled = _get_unfilled_changes(chapter)
+        if unfilled:
+            log(f"[Worker {worker_id}] Chapter {chapter.number}: Cleaning {len(unfilled)} changes...")
+            filled_count = 0
+            
+            for change_id in unfilled:
+                original = _get_change_original(chapter, change_id)
+                if not original.strip():
+                    continue
+                
+                try:
+                    await asyncio.sleep(0)  # Yield control
+                    cleaned = client.clean_paragraph(original, target_lang, target_sexual, target_violence, aggression)
+                    _set_change_cleaned(chapter, change_id, cleaned)
+                    filled_count += 1
+                    
+                    if filled_count % 5 == 0:
+                        log(f"[Worker {worker_id}] Chapter {chapter.number}: Cleaned [{filled_count}/{len(unfilled)}]")
+                except Exception as e:
+                    log(f"[Worker {worker_id}] Chapter {chapter.number}: Error cleaning {change_id}: {e}")
+                    continue
+            
+            log(f"[Worker {worker_id}] Chapter {chapter.number}: Filled {filled_count} changes")
+        
+        # Verify: re-rate with CLEANED substituted
+        try:
+            await asyncio.sleep(0)  # Yield control
+            text = chapter.get_text_with_cleaned()
+            if len(text) > 10000:
+                text = text[:10000] + "\n\n[truncated for rating]"
+            
+            rating = client.rate_chapter(text)
+            chapter.rating = rating
+            
+            still_exceeds = rating.exceeds_target(target_lang, target_sexual, target_violence)
+            
+            if still_exceeds:
+                log(f"[Worker {worker_id}] Chapter {chapter.number}: Still exceeds (L={rating.language} A={rating.sexual} V={rating.violence})")
+            else:
+                log(f"[Worker {worker_id}] Chapter {chapter.number}: ✓ Target met (L={rating.language} A={rating.sexual} V={rating.violence})")
+                break
+        except Exception as e:
+            log(f"[Worker {worker_id}] Chapter {chapter.number}: Error verifying: {e}")
+            break
+    
+    elapsed = time.time() - start_time
+    log(f"[Worker {worker_id}] ✅ Chapter {chapter.number} complete ({int(elapsed)}s, {total_changes} changes)")
+    
+    return total_changes
+
+
+async def cmd_clean_parallel(
+    bw: BookWashFile,
+    api_key: str,
+    model: str,
+    num_workers: int,
+    target_lang: int,
+    target_sexual: int,
+    target_violence: int,
+    max_iterations: int,
+    verbose: bool,
+    session_dir: Optional[Path] = None,
+    log_callback: Optional[Callable[[str], None]] = None
+) -> int:
+    """
+    Parallel cleaning pipeline using async workers with a shared queue.
+    Writes per-chapter files during processing for crash resilience.
+    """
+    def log(msg: str):
+        if log_callback:
+            log_callback(msg)
+        else:
+            print(msg)
+    
+    chapters_to_clean = [ch for ch in bw.chapters if ch.needs_cleaning]
+    
+    if not chapters_to_clean:
+        log("No chapters need cleaning.")
+        return 0
+    
+    log(f"=== PASS B-C: Cleaning {len(chapters_to_clean)} chapters ({num_workers} workers) ===")
+    log(f"Target levels: language={target_lang} ({LEVEL_TO_RATING[target_lang]}), "
+        f"adult={target_sexual} ({LEVEL_TO_RATING[target_sexual]}), "
+        f"violence={target_violence} ({LEVEL_TO_RATING[target_violence]})")
+    log(f"Max iterations per chapter: {max_iterations}")
+    log("")
+    
+    # Create queue and add chapters
+    queue = asyncio.Queue()
+    for chapter in chapters_to_clean:
+        await queue.put(chapter)
+    
+    # Create clients (one per worker to avoid threading issues)
+    clients = [GeminiClient(api_key, model) for _ in range(num_workers)]
+    
+    total_changes = 0
+    completed = []
+    
+    async def worker(worker_id: int):
+        nonlocal total_changes
+        client = clients[worker_id]
+        
+        while True:
+            try:
+                chapter = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                # Queue is empty
+                break
+            
+            try:
+                changes = await worker_clean_chapter(
+                    worker_id + 1,
+                    chapter,
+                    client,
+                    target_lang,
+                    target_sexual,
+                    target_violence,
+                    max_iterations,
+                    verbose,
+                    log_callback
+                )
+                total_changes += changes
+                completed.append(chapter.number)
+                
+                # Write per-chapter file if session_dir provided
+                if session_dir:
+                    chapter_file = session_dir / f"ch_{chapter.number:03d}.bookwash"
+                    write_chapter_bookwash(chapter, chapter_file, bw.settings)
+                
+                # Log progress
+                log(f"Progress: {len(completed)}/{len(chapters_to_clean)} chapters complete")
+                
+            except Exception as e:
+                log(f"[Worker {worker_id + 1}] ❌ Chapter {chapter.number} failed: {e}")
+            finally:
+                queue.task_done()
+    
+    # Start workers
+    workers = [asyncio.create_task(worker(i)) for i in range(num_workers)]
+    
+    # Wait for all work to complete
+    await queue.join()
+    
+    # Cancel workers
+    for w in workers:
+        w.cancel()
+    
+    await asyncio.gather(*workers, return_exceptions=True)
+    
+    log("")
+    log(f"Cleaning complete: {total_changes} total changes made across {len(completed)} chapters")
+    
+    return total_changes
+
+
 # --- CLI ---
 
 def main():
@@ -1648,6 +2012,10 @@ Examples:
                        help='Paragraphs per chunk for identification (default: 3)')
     parser.add_argument('--aggression', type=int, default=1, choices=[1,2,3],
                        help='Cleaning aggression level: 1=normal, 2=aggressive, 3=very aggressive')
+    parser.add_argument('--workers', type=int, default=0,
+                       help='Number of parallel workers for cleaning (0=auto, 1=serial, 2+=parallel; default: 0)')
+    parser.add_argument('--output-dir', type=str,
+                       help='Directory to write per-chapter files during parallel processing')
     
     args = parser.parse_args()
     
@@ -1700,9 +2068,40 @@ Examples:
         print()
     
     if args.clean:
-        cmd_clean(bw, client, args.verbose, 
-                  max_iterations=args.max_iterations,
-                  verify=not args.no_verify)
+        # Determine worker count
+        num_workers = args.workers
+        if num_workers == 0:
+            # Auto: use 3 workers for books with 10+ chapters needing cleaning
+            chapters_to_clean = [ch for ch in bw.chapters if ch.needs_cleaning]
+            num_workers = 3 if len(chapters_to_clean) >= 10 else 1
+        
+        if num_workers > 1:
+            # Parallel processing
+            session_dir = None
+            if args.output_dir:
+                session_dir = Path(args.output_dir)
+                session_dir.mkdir(parents=True, exist_ok=True)
+            
+            asyncio.run(cmd_clean_parallel(
+                bw, api_key, args.model,
+                num_workers=num_workers,
+                target_lang=args.language,
+                target_sexual=args.sexual,
+                target_violence=args.violence,
+                max_iterations=args.max_iterations,
+                verbose=args.verbose,
+                session_dir=session_dir
+            ))
+            
+            # Merge chapter files if they were written
+            if session_dir and list(session_dir.glob('ch_*.bookwash')):
+                print("Merging per-chapter files...")
+                merge_chapter_files(session_dir, input_path, bw.settings)
+        else:
+            # Serial processing (original)
+            cmd_clean(bw, client, args.verbose, 
+                      max_iterations=args.max_iterations,
+                      verify=not args.no_verify)
         print()
     
     # Write updated file

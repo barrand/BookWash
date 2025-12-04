@@ -1,28 +1,29 @@
 # BookWash - Project Requirements & Context
 
 ## Project Overview
-BookWash is a Flutter desktop application that cleans EPUB books by using Ollama LLM (Large Language Model) to remove profanity and sexual content based on user-defined sensitivity levels.
+BookWash moderates EPUB books using an AI model to remove or adjust language, sexual content, and violence per user-selected sensitivity levels. The system consists of a Flutter Web frontend and a FastAPI backend with persistent sessions, live logs, and review-before-export workflows.
 
 ## Core Purpose
-- Interface with local Ollama LLM to intelligently clean EPUB books
-- Generate a new cleaned EPUB file with content filtered according to user preferences
-- Provide real-time feedback on cleaning progress and content removed
+- Provide a reviewable moderation workflow for EPUB content.
+- Use an AI model (Gemini) to rate/clean content with transparent logs.
+- Persist sessions and allow resume after refresh or restarts.
+- Export a cleaned EPUB after change review and acceptance.
 
 ## Platform Requirements
-- **Desktop Application**: macOS and Windows
-- Built with Flutter for cross-platform compatibility
-- Uses local Ollama LLM (not cloud-based)
+- **Frontend**: Flutter Web (runs locally or deployed via backend static serving).
+- **Backend**: FastAPI server serving API + web assets; SSE for live logs; Basic Auth optional.
+- **AI Model**: Google Gemini via API key; with model fallback on rate limits.
 
-## User Interface Components
+## User Interface Components (Web)
 
 ### Main Screen
 1. **File Selection**
-   - Button/widget to allow user to browse and select an EPUB file
-   - Display selected file path or name
+  - Browse/upload an EPUB
+  - Shows selected filename
 
-2. **Sensitivity Sliders** (Three independent sliders, 1-5 scale based on movie ratings)
+2. **Sensitivity Sliders** (1-5 scale, movie ratings)
    
-   **Language Sensitivity Slider**: Range 1-5
+  **Language Sensitivity Slider**: Range 1-5
    
    - **Level 1 - G Rated**: No profanity or crude language (Most censorship)
      - **Removes:** ALL profanity, insults, and crude language
@@ -52,7 +53,7 @@ BookWash is a Flutter desktop application that cleans EPUB books by using Ollama
      - **Keeps:** All language including f-words, c-words, all profanity
      - **Result:** Original unmodified content
 
-   **Sexual Content Sensitivity Slider**: Range 1-5
+  **Sexual Content Sensitivity Slider**: Range 1-5
    
    - **Level 1 - G Rated**: No sexual content allowed (Most censorship)
      - **Removes:** ALL romantic and sexual content beyond basic plot necessity
@@ -83,7 +84,7 @@ BookWash is a Flutter desktop application that cleans EPUB books by using Ollama
      - **Keeps:** All sexual and romantic content including explicit scenes
      - **Result:** Original unmodified content
 
-   **Violence Sensitivity Slider**: Range 1-5
+  **Violence Sensitivity Slider**: Range 1-5
    
    - **Level 1 - G Rated**: No violence (Most censorship)
      - **Removes:** ALL violence, physical conflict, weapons, injuries, and threats
@@ -115,23 +116,20 @@ BookWash is a Flutter desktop application that cleans EPUB books by using Ollama
      - **Result:** Original unmodified content
 
 3. **Action Button**
-   - "Go" / "Clean Book" button to start the cleaning process
+  - "Process Book" starts upload + server-side processing
 
-4. **Progress Indicators**
-   - **Progress Bar**: Shows percentage completion (0-100%)
-   - **Running Summary Display**: 
-     - Count of profanity instances removed (organized by sensitivity level)
-       - Example: "Level 1: 5 | Level 2: 8 | Level 3: 12 | Level 4: 0"
-     - Count of sexual content instances removed (organized by sensitivity level)
-       - Example: "Level 1: 3 | Level 2: 8 | Level 3: 15 | Level 4: 0"
-     - Count of violence instances removed (organized by sensitivity level)
-       - Example: "Level 1: 7 | Level 2: 4 | Level 3: 2 | Level 4: 0"
-     - Real-time updates as processing continues
-   - **"Reveal" Button**: Expandable/collapsible section showing detailed logs of removed content
-     - Display each removed text snippet with its categorization level
-     - Show original context (surrounding sentence/paragraph)
-     - Allow user to verify that filtering is working as expected
-     - Can be toggled on/off to reduce visual clutter during processing
+4. **Progress & Logs**
+   - Progress bar and phase chips (converting, rating, cleaning, complete)
+   - Live logs via SSE; selectable monospace; heartbeat messages during quiet periods
+   - URL updates with `?session={id}` for refresh/resume
+
+5. **Change Review**
+   - Side-by-side original vs cleaned snippets per change
+   - Accept/reject individual changes; accept-all option
+
+6. **Export & Cancel**
+   - Export cleaned EPUB
+   - Cancel button to stop backend subprocess and delete session
 
 ## Processing Logic
 
@@ -141,7 +139,7 @@ BookWash is a Flutter desktop application that cleans EPUB books by using Ollama
 - Preserve formatting and structure
 
 ### LLM Integration
-- Send chunks to local Ollama LLM for processing
+- Send chunks to Gemini via backend script `bookwash_llm.py`
 - Process chunks independently (can be done sequentially or with queuing)
 - Request: Clean chunk based on profanity, sexual content, and violence sensitivity levels
 - LLM should flag/remove content and track what was removed
@@ -153,15 +151,14 @@ BookWash is a Flutter desktop application that cleans EPUB books by using Ollama
 - Output file naming: `[original_filename]_cleaned.epub`
 
 ## Data Flow
-1. User selects EPUB file
-2. User sets sensitivity levels (1-5 for each)
-3. User clicks "Go" button
-4. App extracts text from EPUB in paragraph chunks
-5. App sends each chunk to Ollama with cleaning instructions
-6. LLM processes and returns cleaned chunk + removal summary
-7. App updates progress bar and running summary
-8. After all chunks processed, new EPUB file is written
-9. User notified of completion with file location
+1. User uploads EPUB via web UI.
+2. Backend creates a session and stores files in `webapp/sessions/{id}`.
+3. Frontend starts processing via `/api/process/{id}`.
+4. Backend converts EPUB → `.bookwash`, runs `bookwash_llm.py` to rate/clean, and logs progress.
+5. Frontend subscribes to `/api/logs/{id}` for live status and logs.
+6. Backend parses `.bookwash` into changes; frontend reviews accept/reject.
+7. Frontend exports via `/api/session/{id}/export` to download cleaned EPUB.
+8. Sessions persist on disk for resume via `?session={id}`.
 
 ## Technical Considerations
 
@@ -170,25 +167,48 @@ BookWash is a Flutter desktop application that cleans EPUB books by using Ollama
 - EPUB files are ZIP archives with specific structure
 - Preserve CSS, images, metadata, and document structure
 
-### Performance
-- Show progress updates frequently (don't freeze UI)
-- Handle large books efficiently with chunk processing
-- Consider memory usage with large EPUB files
+### Performance & Reliability
+- SSE for frequent progress updates
+- Heartbeat log messages every 30s during quiet LLM periods
+- Frequent session saves on progress changes to survive restarts
+- Daily cleanup task removes sessions inactive > 14 days
 
 ### User Experience
-- Clear visual feedback during processing
-- Ability to cancel operation (future consideration)
-- Error handling for invalid files or Ollama connection issues
-- Clear display of what was removed from the book
+- Clear visual feedback with progress/phase chips and logs
+- Cancel operation supported; backend kills subprocess
+- Error handling with logs and review state
+- Auth-aware resume handling in case of Basic Auth enabled
 
-## Future Enhancements (Optional)
-- Cancel button during processing
-- Preview of changes before/after
-- Customizable output filename
-- Settings for Ollama connection (localhost, custom ports)
-- Batch processing multiple books
-- Undo/rollback functionality
-- Custom filtering rules beyond profanity/sexual content
+## Backend Services & Endpoints
+- `GET /api/health`: Health check.
+- `POST /api/upload`: Upload EPUB; returns session ID.
+- `POST /api/process/{id}`: Start processing for a session.
+- `GET /api/logs/{id}`: SSE logs + status, progress, phase.
+- `GET /api/session/{id}`: Session state including changes and logs.
+- `POST /api/session/{id}/change/{changeId}`: Set change status to `accepted` or `rejected`.
+- `POST /api/session/{id}/accept-all`: Accept all pending changes.
+- `POST /api/session/{id}/export`: Export cleaned EPUB download; sets status to `complete`.
+- `DELETE /api/session/{id}`: Cancel processing and delete session files.
+- `NEW GET /api/sessions`: List sessions (memory + disk) with metadata.
+- `NEW GET /api/session/{id}/download`: Download `.bookwash` file for recovery.
+
+## Services
+- **FastAPI Backend**: SSE, session persistence, auth, cleanup.
+- **Flutter Web Frontend**: Upload, logs, review, export, cancel; build under `build/web`.
+- **Gemini API**: Requires `GEMINI_API_KEY`; model fallback ping-pong between `gemini-2.0-flash` and `gemini-1.5-flash` on 429.
+- **Render Deployment**: Configure Persistent Disk to preserve `webapp/sessions`. Consider mounting at `/data/sessions` and making it configurable.
+
+## Environment Variables
+- `GEMINI_API_KEY` (required)
+- `APP_USERNAME` (optional; default `bookwash`)
+- `APP_PASSWORD` (optional; when set, all routes require Basic Auth)
+- `PORT` (optional; default 8000)
+
+## Current Status
+- Web + backend flow implemented with live logs and review.
+- Session persistence with frequent saves; daily cleanup task.
+- Cancel support, export, and cache-busting for frontend assets.
+- New recovery endpoints added for session listing and `.bookwash` download.
 
 ## Current Status
 - Project initialized as Flutter app
