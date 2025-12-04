@@ -56,7 +56,7 @@ class _BookWashHomeState extends State<BookWashHome> {
   String geminiApiKey = '';
 
   // Model selection
-  String selectedModel = 'gemini-1.5-flash'; // Default Gemini model
+  String selectedModel = 'gemini-2.5-flash-lite'; // Default Gemini model
 
   // Bookwash file state
   String? generatedBookwashPath;
@@ -440,6 +440,8 @@ class _BookWashHomeState extends State<BookWashHome> {
         sexualContentLevel.toString(),
         '--violence',
         violenceLevel.toString(),
+        '--workers',
+        '3', // Use 3 parallel workers for faster processing
       ]);
 
       if (llmResult != 0) {
