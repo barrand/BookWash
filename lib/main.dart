@@ -43,7 +43,7 @@ class _BookWashHomeState extends State<BookWashHome> {
   bool isLoadingFile = false;
   int profanityLevel = 2; // Default: PG language
   int sexualContentLevel = 2; // Default: PG sexual content
-  int violenceLevel = 5; // Default: Unrated violence (no censorship)
+  int violenceLevel = 4; // Default: Unfiltered (no censorship)
   bool isProcessing = false;
   bool isCancelling = false;
   double progress = 0.0;
@@ -118,9 +118,14 @@ class _BookWashHomeState extends State<BookWashHome> {
   Future<void> _loadSavedLevels() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      profanityLevel = prefs.getInt('profanity_level') ?? profanityLevel;
-      sexualContentLevel = prefs.getInt('sexual_level') ?? sexualContentLevel;
-      violenceLevel = prefs.getInt('violence_level') ?? violenceLevel;
+      profanityLevel = (prefs.getInt('profanity_level') ?? profanityLevel)
+          .clamp(1, 4);
+      sexualContentLevel = (prefs.getInt('sexual_level') ?? sexualContentLevel)
+          .clamp(1, 4);
+      violenceLevel = (prefs.getInt('violence_level') ?? violenceLevel).clamp(
+        1,
+        4,
+      );
     });
   }
 
