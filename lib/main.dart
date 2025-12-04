@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -189,7 +188,6 @@ class _BookWashHomeState extends State<BookWashHome> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['epub'],
-      withData: kIsWeb, // Only load bytes for web platform
     );
 
     print(
@@ -356,15 +354,23 @@ class _BookWashHomeState extends State<BookWashHome> {
   }
 
   Future<void> processBook() async {
+    print('════════════════════════════════════════');
+    print('🔴 processBook() called - START OF FUNCTION');
+    print('════════════════════════════════════════');
+
     if (selectedFilePath == null) {
+      print('⚠️ selectedFilePath is null');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select an EPUB file first')),
       );
       return;
     }
 
+    print('✓ selectedFilePath: $selectedFilePath');
+
     // Check if Gemini API key is set
     if (geminiApiKey.isEmpty) {
+      print('⚠️ geminiApiKey is empty');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -391,13 +397,23 @@ class _BookWashHomeState extends State<BookWashHome> {
       bookwashFile = null;
     });
 
+    _addLogMessage('🚀 Process started - debugging enabled');
+    print('🚀 Process started - debugging enabled');
+    _addLogMessage('');
+
     try {
-      // Determine bookwash output path
+      // Determine bookwash output path - use temp directory to avoid sandboxing issues
       final epubPath = selectedFilePath!;
-      final bookwashPath = epubPath.replaceAll('.epub', '.bookwash');
+      _addLogMessage('📂 Creating temp directory...');
+      final tempDir = Directory.systemTemp.createTempSync('bookwash_');
+      _addLogMessage('✓ Temp directory created: ${tempDir.path}');
+
+      final bookwashPath =
+          '${tempDir.path}/${path.basenameWithoutExtension(epubPath)}.bookwash';
 
       _addLogMessage('📚 Starting BookWash processing...');
       _addLogMessage('📖 Input: ${path.basename(epubPath)}');
+      _addLogMessage('📁 Temp directory: ${tempDir.path}');
 
       // Step 1: Convert EPUB to .bookwash
       _addLogMessage('');
@@ -411,6 +427,8 @@ class _BookWashHomeState extends State<BookWashHome> {
       );
 
       if (epubToBookwashResult != 0) {
+        _addLogMessage('❌ EPUB to .bookwash conversion failed');
+        _addLogMessage('Check that the EPUB file is valid and not corrupted');
         throw Exception(
           'Failed to convert EPUB to .bookwash (exit code: $epubToBookwashResult)',
         );
@@ -447,7 +465,7 @@ class _BookWashHomeState extends State<BookWashHome> {
         '--violence',
         violenceLevel.toString(),
         '--workers',
-        '3', // Use 3 parallel workers for faster processing
+        '5', // Use 5 parallel workers for faster processing
       ]);
 
       if (llmResult != 0) {
@@ -583,33 +601,87 @@ class _BookWashHomeState extends State<BookWashHome> {
   }
 
   Future<int> _runPythonScript(String scriptPath, List<String> args) async {
-    final process = await Process.start(
-      'python3',
-      ['-u', scriptPath, ...args], // -u for unbuffered output
-      workingDirectory: path
-          .dirname(Platform.script.toFilePath())
-          .replaceAll('/lib', ''),
-      environment: {'PYTHONUNBUFFERED': '1'}, // Also set env var for subprocess
-    );
+    // Get the project root directory
+    // The EPUB file path tells us where the actual project is
+    String? workingDir;
+    try {
+      // Use the EPUB file's parent directory to find the project root
+      if (selectedFilePath != null) {
+        final epubDir = Directory(path.dirname(selectedFilePath!));
+        var current = epubDir;
 
-    // Stream stdout to log and parse progress
-    process.stdout
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((line) {
-          _addLogMessage(line);
-          _parseProgressFromLine(line);
-        });
+        // Walk up to find pubspec.yaml (project root)
+        while (current.parent.path != current.path) {
+          if (File('${current.path}/pubspec.yaml').existsSync()) {
+            workingDir = current.path;
+            break;
+          }
+          current = current.parent;
+        }
+      }
 
-    // Stream stderr to log
-    process.stderr
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((line) {
-          _addLogMessage('⚠️ $line');
-        });
+      // Fallback to current directory
+      workingDir ??= Directory.current.path;
 
-    return await process.exitCode;
+      // Verify the scripts directory exists
+      if (!Directory('$workingDir/scripts').existsSync()) {
+        _addLogMessage(
+          '⚠️ Scripts directory not found at: $workingDir/scripts',
+        );
+        _addLogMessage('⚠️ Cannot find project scripts - processing will fail');
+      }
+    } catch (e) {
+      _addLogMessage('⚠️ Working directory error: $e');
+      workingDir = Directory.current.path;
+    }
+
+    _addLogMessage('🔧 Working directory: $workingDir');
+    print('🔧 Working directory: $workingDir');
+
+    // Use full path to python3 to avoid xcrun issues in sandbox
+    final python3Path = '/usr/bin/python3';
+
+    _addLogMessage('🔧 Python path: $python3Path');
+    print('🔧 Python path: $python3Path');
+    _addLogMessage('🔧 Running: $python3Path -u $scriptPath ${args.join(" ")}');
+    print('🔧 Running: $python3Path -u $scriptPath ${args.join(" ")}');
+
+    try {
+      final process = await Process.start(
+        python3Path,
+        ['-u', scriptPath, ...args], // -u for unbuffered output
+        workingDirectory: workingDir,
+        environment: {
+          'PYTHONUNBUFFERED': '1',
+          'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', // Minimal PATH for sandbox
+        }, // Also set env var for subprocess
+      );
+
+      // Stream stdout to log and parse progress
+      process.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) {
+            _addLogMessage(line);
+            _parseProgressFromLine(line);
+          });
+
+      // Stream stderr to log
+      process.stderr
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) {
+            _addLogMessage('⚠️ $line');
+            print('⚠️ STDERR: $line');
+          });
+      return await process.exitCode;
+    } catch (e) {
+      _addLogMessage('❌ Failed to start Python process: $e');
+      _addLogMessage(
+        '💡 Make sure Python 3 is installed: brew install python3',
+      );
+      return 1;
+    }
   }
 
   Future<void> _loadBookwashFile() async {
@@ -724,11 +796,13 @@ class _BookWashHomeState extends State<BookWashHome> {
     if (!_autoScrollLog) return; // respect user toggle
     if (_scrollController.hasClients) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
       });
     }
   }
