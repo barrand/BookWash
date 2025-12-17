@@ -179,7 +179,7 @@ class BookWashParser {
     }
 
     // Update modified timestamp
-    final now = DateTime.now().toUtc().toIso8601String().split('.')[0] + 'Z';
+    final now = '${DateTime.now().toUtc().toIso8601String().split('.')[0]}Z';
     lines.add('#MODIFIED: $now');
 
     if (bookwash.settings.isNotEmpty) {

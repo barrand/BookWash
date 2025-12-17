@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:bookwash/services/epub_parser.dart';
 
 Future<void> main(List<String> args) async {
-  if (args.length < 1) {
+  if (args.isEmpty) {
     stderr.writeln(
       'Usage: dart run bin/parse_epubs.dart <epub-path> [<epub-path-2> ...]',
     );
