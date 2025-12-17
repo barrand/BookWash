@@ -83,6 +83,11 @@ The file must begin with a header containing metadata.
 ```
 #MODIFIED: 2025-11-30T16:45:00Z
 #SETTINGS: target_language=2 target_sexual=2 target_violence=5
+#CLEANING_PROMPT_START
+# You are a content filter for books. Clean the following text...
+# (Full Gemini cleaning prompt used for this book)
+# ...
+#CLEANING_PROMPT_END
 #ASSETS: Original Book Title_assets/
 #AUTHOR: Jane Smith
 #PUBLISHER: Acme Publishing
@@ -101,6 +106,7 @@ The file must begin with a header containing metadata.
 | `#CREATED` | `#CREATED: <ISO8601>` | When file was created |
 | `#MODIFIED` | `#MODIFIED: <ISO8601>` | When file was last modified |
 | `#SETTINGS` | `#SETTINGS: <key>=<value> ...` | Space-separated key=value pairs |
+| `#CLEANING_PROMPT_START/END` | Multi-line block | The complete Gemini LLM prompt used for cleaning (for analysis/debugging). Each line prefixed with `#`. Optional. |
 | `#ASSETS` | `#ASSETS: <folder_path>` | Relative path to assets folder |
 | `#AUTHOR` | `#AUTHOR: <name>` | Book author(s) |
 | `#PUBLISHER` | `#PUBLISHER: <name>` | Publisher name |
