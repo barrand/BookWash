@@ -531,7 +531,7 @@ class _BookWashHomeState extends State<BookWashHome> {
         '--language-words',
         jsonEncode(selectedWords),
         '--filter-types',
-        'language', // Only language filtering via checkboxes
+        'language,sexual,violence', // Filter all content types
         '--sexual',
         sexualContentLevel.toString(),
         '--violence',
@@ -643,7 +643,7 @@ class _BookWashHomeState extends State<BookWashHome> {
     }
 
     // Detect phase transitions
-    if (line.contains('Rating') && line.contains('chapters...')) {
+    if (line.contains('PASS A: Rating') && line.contains('chapters')) {
       final countMatch = RegExp(r'Rating (\d+) chapters').firstMatch(line);
       if (countMatch != null) {
         setState(() {
@@ -652,8 +652,9 @@ class _BookWashHomeState extends State<BookWashHome> {
           progressCurrent = 0;
         });
       }
-    } else if (line.contains('Cleaning') && line.contains('chapters...')) {
-      final countMatch = RegExp(r'Cleaning (\d+) chapters').firstMatch(line);
+    } else if (line.contains('CLEANING PIPELINE') &&
+        line.contains('chapters')) {
+      final countMatch = RegExp(r'PIPELINE: (\d+) chapters').firstMatch(line);
       if (countMatch != null) {
         setState(() {
           progressPhase = 'cleaning';
@@ -818,6 +819,17 @@ class _BookWashHomeState extends State<BookWashHome> {
     _moveToNextChange();
   }
 
+  void _acceptAllChanges() {
+    setState(() {
+      for (final entry in _allPendingChanges) {
+        entry.value.status = 'accepted';
+      }
+    });
+    _addLogMessage(
+      '✅ Accepted all ${_allPendingChanges.length} pending changes',
+    );
+  }
+
   void _rejectChange(BookWashChange change) {
     setState(() {
       change.status = 'rejected';
@@ -905,7 +917,7 @@ class _BookWashHomeState extends State<BookWashHome> {
 
     return RichText(
       text: TextSpan(
-        style: const TextStyle(color: Colors.white, fontSize: 13),
+        style: const TextStyle(color: Color(0xFF212121), fontSize: 14),
         children: words.asMap().entries.map((entry) {
           final index = entry.key;
           final word = entry.value;
@@ -917,9 +929,9 @@ class _BookWashHomeState extends State<BookWashHome> {
             text: index < words.length - 1 ? '$word ' : word,
             style: TextStyle(
               backgroundColor: isRemoved
-                  ? Colors.red.withOpacity(0.5)
+                  ? const Color(0xFFEF5350)
                   : Colors.transparent,
-              color: isRemoved ? Colors.red[100] : Colors.white,
+              color: isRemoved ? Colors.white : const Color(0xFF212121),
               fontWeight: isRemoved ? FontWeight.bold : FontWeight.normal,
             ),
           );
@@ -936,7 +948,7 @@ class _BookWashHomeState extends State<BookWashHome> {
 
     return RichText(
       text: TextSpan(
-        style: const TextStyle(color: Colors.white, fontSize: 13),
+        style: const TextStyle(color: Color(0xFF212121), fontSize: 14),
         children: words.asMap().entries.map((entry) {
           final index = entry.key;
           final word = entry.value;
@@ -948,9 +960,9 @@ class _BookWashHomeState extends State<BookWashHome> {
             text: index < words.length - 1 ? '$word ' : word,
             style: TextStyle(
               backgroundColor: isAdded
-                  ? Colors.green.withOpacity(0.4)
+                  ? const Color(0xFF66BB6A)
                   : Colors.transparent,
-              color: isAdded ? Colors.green[100] : Colors.white,
+              color: isAdded ? Colors.white : const Color(0xFF212121),
               fontWeight: isAdded ? FontWeight.bold : FontWeight.normal,
             ),
           );
@@ -1200,7 +1212,10 @@ class _BookWashHomeState extends State<BookWashHome> {
                     icon: const Icon(Icons.cancel),
                     label: Text(isCancelling ? 'Cancelling...' : 'Cancel'),
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 16,
+                        horizontal: 24,
+                      ),
                       backgroundColor: Colors.red.withOpacity(0.8),
                     ),
                   ),
@@ -1217,9 +1232,17 @@ class _BookWashHomeState extends State<BookWashHome> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Step 3: Processing',
-                        style: TextStyle(
+                      Text(
+                        progressPhase == 'converting'
+                            ? 'Step 3: Converting to BookWash Format'
+                            : progressPhase == 'rating'
+                            ? 'Step 3: Rating Chapters'
+                            : progressPhase == 'cleaning'
+                            ? 'Step 3: Cleaning Chapters'
+                            : progressPhase == 'complete'
+                            ? 'Step 3: Complete'
+                            : 'Step 3: Processing',
+                        style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
@@ -1593,10 +1616,15 @@ class _BookWashHomeState extends State<BookWashHome> {
                                 _allPendingChanges[currentReviewChangeIndex]
                                     .value,
                               ),
-                              icon: const Icon(Icons.close),
+                              icon: const Icon(Icons.close, size: 18),
                               label: const Text('Reject'),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.red,
+                                backgroundColor: const Color(0xFFD32F2F),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -1605,10 +1633,29 @@ class _BookWashHomeState extends State<BookWashHome> {
                                 _allPendingChanges[currentReviewChangeIndex]
                                     .value,
                               ),
-                              icon: const Icon(Icons.check),
+                              icon: const Icon(Icons.check, size: 18),
                               label: const Text('Accept'),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
+                                backgroundColor: const Color(0xFF388E3C),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed: _acceptAllChanges,
+                              icon: const Icon(Icons.done_all, size: 18),
+                              label: const Text('Accept All'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF1976D2),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
                               ),
                             ),
                           ],
@@ -1642,13 +1689,17 @@ class _BookWashHomeState extends State<BookWashHome> {
             // Export EPUB Button - shows after processing
             if (bookwashFile != null && !isProcessing) ...[
               const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: _exportToEpub,
-                icon: const Icon(Icons.download),
-                label: const Text('Export EPUB'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: Colors.teal,
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _exportToEpub,
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('Export EPUB'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    backgroundColor: const Color(0xFF00897B),
+                    foregroundColor: Colors.white,
+                  ),
                 ),
               ),
             ],
@@ -1689,47 +1740,28 @@ class _BookWashHomeState extends State<BookWashHome> {
 
     return Container(
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade700),
+        border: Border.all(color: Colors.grey.shade700, width: 1),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Label to identify this is the active comparison UI
+          // Chapter header
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.blue.shade900,
+              color: const Color(0xFF2C2C2C),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(7),
                 topRight: Radius.circular(7),
               ),
             ),
-            child: const Row(
-              children: [
-                Icon(Icons.edit, size: 16, color: Colors.blue),
-                SizedBox(width: 8),
-                Text(
-                  '▶ ACTIVE COMPARISON (Step 4 Review)',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Chapter header
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.grey.shade800),
             child: Row(
               children: [
                 const Icon(Icons.book, size: 16),
                 const SizedBox(width: 8),
                 Text(
-                  'Chapter ${chapterIndex + 1}: ${chapter.title}',
+                  'Chapter ${chapter.number}: ${chapter.title}',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: 8),
@@ -1754,11 +1786,12 @@ class _BookWashHomeState extends State<BookWashHome> {
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.1),
+                          color: const Color(0xFFFFEBEE),
                           border: Border.all(
-                            color: Colors.red.withOpacity(0.3),
+                            color: const Color(0xFFE57373),
+                            width: 1.5,
                           ),
-                          borderRadius: BorderRadius.circular(4),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1767,7 +1800,7 @@ class _BookWashHomeState extends State<BookWashHome> {
                               'Original (Red = Removed)',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: Colors.red,
+                                color: Color(0xFFC62828),
                                 fontSize: 12,
                               ),
                             ),
@@ -1791,11 +1824,12 @@ class _BookWashHomeState extends State<BookWashHome> {
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.1),
+                          color: const Color(0xFFE8F5E9),
                           border: Border.all(
-                            color: Colors.green.withOpacity(0.3),
+                            color: const Color(0xFF66BB6A),
+                            width: 1.5,
                           ),
-                          borderRadius: BorderRadius.circular(4),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1804,7 +1838,7 @@ class _BookWashHomeState extends State<BookWashHome> {
                               'Cleaned (Green = Added/Modified)',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: Colors.green,
+                                color: Color(0xFF2E7D32),
                                 fontSize: 12,
                               ),
                             ),
