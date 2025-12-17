@@ -98,7 +98,6 @@ class DesktopApiService implements ApiService {
   @override
   Future<void> startProcessing({
     required String sessionId,
-    required int targetLanguage,
     required int targetAdult,
     required int targetViolence,
     required String model,
@@ -109,7 +108,6 @@ class DesktopApiService implements ApiService {
     }
 
     session.status = 'processing';
-    session.targetLanguage = targetLanguage;
     session.targetAdult = targetAdult;
     session.targetViolence = targetViolence;
     session.model = model;
@@ -154,7 +152,7 @@ class DesktopApiService implements ApiService {
 
       final ratingNames = {1: 'G', 2: 'PG', 3: 'PG-13', 4: 'Unfiltered'};
       session.addLog(
-        'Target levels: Language=${ratingNames[session.targetLanguage]}, '
+        'Target levels: '
         'Adult=${ratingNames[session.targetAdult]}, '
         'Violence=${ratingNames[session.targetViolence]}',
       );
@@ -169,8 +167,6 @@ class DesktopApiService implements ApiService {
           path.join(scriptsDir, 'bookwash_llm.py'),
           '--rate',
           '--clean',
-          '--language',
-          session.targetLanguage.toString(),
           '--sexual',
           session.targetAdult.toString(),
           '--violence',
@@ -457,7 +453,6 @@ class _LocalSession {
   int progress = 0;
   String phase = 'idle';
   String? error;
-  int targetLanguage = 2;
   int targetAdult = 2;
   int targetViolence = 3;
   String model = 'gemini-2.0-flash';

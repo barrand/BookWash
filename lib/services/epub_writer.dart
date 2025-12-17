@@ -161,7 +161,7 @@ class EpubWriter {
   </head>
   <body>
     <h1>$escapedTitle</h1>
-${paragraphsHtml}
+$paragraphsHtml
   </body>
 </html>''';
     } catch (e) {
@@ -192,7 +192,7 @@ ${paragraphsHtml}
   </head>
   <body>
     <h1>$escapedTitle</h1>
-${paragraphsHtml}
+$paragraphsHtml
   </body>
 </html>''';
     }

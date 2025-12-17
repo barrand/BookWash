@@ -41,7 +41,35 @@ class _BookWashHomeState extends State<BookWashHome> {
   String? selectedFileName;
   ParsedEpub? parsedEpub;
   bool isLoadingFile = false;
-  int profanityLevel = 2; // Default: PG language
+  // Language filtering now uses word selection instead of level
+  final Map<String, bool> languageWordSelection = {
+    // Mild
+    'darn': false,
+    'gosh': false,
+    'heck': false,
+    'gee': false,
+    'jeez': false,
+    // Moderate
+    'damn': true,
+    'hell': true,
+    'crap': true,
+    'ass': true,
+    'piss': true,
+    'bummer': true,
+    // Strong
+    'shit': true,
+    'bitch': true,
+    'bastard': true,
+    'asshole': true,
+    'bullshit': true,
+    // Severe
+    'fuck': true,
+    'motherfucker': true,
+    // Taking name in vain
+    'goddamn': true,
+    'jesus christ': true,
+    'oh my god': true,
+  };
   int sexualContentLevel = 2; // Default: PG sexual content
   int violenceLevel = 4; // Default: Unfiltered (no censorship)
   bool isProcessing = false;
@@ -77,9 +105,8 @@ class _BookWashHomeState extends State<BookWashHome> {
   bool _autoScrollLog = true; // user-controlled auto-scroll for live log
 
   // Debug comparisons (per paragraph)
-  // key: unique id "chapterIndex:paragraphIndex"; value: [original, cleaned]
+  // key: unique id "chapterIndex:changeId"; value: [original, cleaned]
   final Map<String, List<String>> _paraComparisons = {};
-  final Set<String> _revealedComparisons = {};
 
   // Cleaned book data
   List<String> cleanedParagraphs = [];
@@ -93,11 +120,22 @@ class _BookWashHomeState extends State<BookWashHome> {
   int currentReviewIndex = 0;
   bool isReviewingChanges = false;
 
+  // Build timestamp for debugging
+  final String _buildTime = DateTime.now().toString().split(
+    '.',
+  )[0]; // YYYY-MM-DD HH:mm:ss
+
   @override
   void initState() {
     super.initState();
     _loadSavedApiKey();
     _loadSavedLevels();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSavedApiKey() async {
@@ -118,8 +156,21 @@ class _BookWashHomeState extends State<BookWashHome> {
   Future<void> _loadSavedLevels() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      profanityLevel = (prefs.getInt('profanity_level') ?? profanityLevel)
-          .clamp(1, 4);
+      // Load language word selections
+      final savedWords = prefs.getString('language_word_selection');
+      if (savedWords != null) {
+        try {
+          final Map<String, dynamic> decoded = jsonDecode(savedWords);
+          decoded.forEach((key, value) {
+            if (languageWordSelection.containsKey(key)) {
+              languageWordSelection[key] = value as bool;
+            }
+          });
+        } catch (e) {
+          // Use defaults if decode fails
+        }
+      }
+
       sexualContentLevel = (prefs.getInt('sexual_level') ?? sexualContentLevel)
           .clamp(1, 4);
       violenceLevel = (prefs.getInt('violence_level') ?? violenceLevel).clamp(
@@ -132,6 +183,14 @@ class _BookWashHomeState extends State<BookWashHome> {
   Future<void> _saveLevel(String key, int value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(key, value);
+  }
+
+  Future<void> _saveLanguageWords() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'language_word_selection',
+      jsonEncode(languageWordSelection),
+    );
   }
 
   Future<void> _showGeminiApiKeyDialog() async {
@@ -402,18 +461,25 @@ class _BookWashHomeState extends State<BookWashHome> {
     _addLogMessage('');
 
     try {
-      // Determine bookwash output path - use temp directory to avoid sandboxing issues
+      // Determine bookwash output path - save in project directory
       final epubPath = selectedFilePath!;
-      _addLogMessage('📂 Creating temp directory...');
-      final tempDir = Directory.systemTemp.createTempSync('bookwash_');
-      _addLogMessage('✓ Temp directory created: ${tempDir.path}');
+      _addLogMessage('📂 Creating work directory...');
+
+      // Create a persistent directory in the project for bookwash files
+      final workDir = Directory(
+        '/Users/bbarrand/Documents/Projects/BookWash/bookwash-files',
+      );
+      if (!workDir.existsSync()) {
+        workDir.createSync(recursive: true);
+      }
+      _addLogMessage('✓ Work directory: ${workDir.path}');
 
       final bookwashPath =
-          '${tempDir.path}/${path.basenameWithoutExtension(epubPath)}.bookwash';
+          '${workDir.path}/${path.basenameWithoutExtension(epubPath)}.bookwash';
 
       _addLogMessage('📚 Starting BookWash processing...');
       _addLogMessage('📖 Input: ${path.basename(epubPath)}');
-      _addLogMessage('📁 Temp directory: ${tempDir.path}');
+      _addLogMessage('💾 Output: ${path.basename(bookwashPath)}');
 
       // Step 1: Convert EPUB to .bookwash
       _addLogMessage('');
@@ -446,8 +512,12 @@ class _BookWashHomeState extends State<BookWashHome> {
       _addLogMessage('═══════════════════════════════════════════');
       _addLogMessage('🤖 Step 2: Rating and cleaning content with AI...');
       _addLogMessage('═══════════════════════════════════════════');
+      final selectedWords = languageWordSelection.entries
+          .where((e) => e.value)
+          .map((e) => e.key)
+          .toList();
       _addLogMessage(
-        'Target levels: Language=${_levelToRating(profanityLevel)}, Adult=${_levelToRating(sexualContentLevel)}, Violence=${_levelToRating(violenceLevel)}',
+        'Target levels: Language: Filtering ${selectedWords.length} words, Adult=${_levelToRating(sexualContentLevel)}, Violence=${_levelToRating(violenceLevel)}',
       );
 
       final llmResult = await _runPythonScript('scripts/bookwash_llm.py', [
@@ -458,14 +528,14 @@ class _BookWashHomeState extends State<BookWashHome> {
         geminiApiKey,
         '--model',
         selectedModel,
-        '--language',
-        profanityLevel.toString(),
+        '--language-words',
+        jsonEncode(selectedWords),
+        '--filter-types',
+        'language', // Only language filtering via checkboxes
         '--sexual',
         sexualContentLevel.toString(),
         '--violence',
         violenceLevel.toString(),
-        '--workers',
-        '5', // Use 5 parallel workers for faster processing
       ]);
 
       if (llmResult != 0) {
@@ -693,6 +763,22 @@ class _BookWashHomeState extends State<BookWashHome> {
         bookwashFile = parsed;
         selectedReviewChapter = 0;
         currentReviewChangeIndex = 0;
+
+        // Populate comparison map from bookwash changes
+        _paraComparisons.clear();
+        for (
+          int chapterIdx = 0;
+          chapterIdx < parsed.chapters.length;
+          chapterIdx++
+        ) {
+          final chapter = parsed.chapters[chapterIdx];
+          for (final change in chapter.changes) {
+            if (change.original.isNotEmpty && change.cleaned.isNotEmpty) {
+              final key = '$chapterIdx:${change.id}';
+              _paraComparisons[key] = [change.original, change.cleaned];
+            }
+          }
+        }
       });
     } catch (e) {
       _addLogMessage('❌ Failed to load bookwash file: $e');
@@ -807,11 +893,86 @@ class _BookWashHomeState extends State<BookWashHome> {
     }
   }
 
+  /// Compute word-level differences between two strings
+  /// Returns list of (word, isChanged) tuples
+  // TODO: Remove after testing - currently unused, but may be useful for future features
+
+  /// Build a rich text widget showing removed words highlighted in red
+  Widget _buildOriginalHighlight(String original, String cleaned) {
+    // Split into words preserving spaces
+    final words = original.split(' ');
+    final cleanedWords = cleaned.split(' ');
+
+    return RichText(
+      text: TextSpan(
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+        children: words.asMap().entries.map((entry) {
+          final index = entry.key;
+          final word = entry.value;
+
+          // Check if this word was removed (not in cleaned version)
+          final isRemoved = !cleanedWords.contains(word);
+
+          return TextSpan(
+            text: index < words.length - 1 ? '$word ' : word,
+            style: TextStyle(
+              backgroundColor: isRemoved
+                  ? Colors.red.withOpacity(0.5)
+                  : Colors.transparent,
+              color: isRemoved ? Colors.red[100] : Colors.white,
+              fontWeight: isRemoved ? FontWeight.bold : FontWeight.normal,
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  /// Build a rich text widget showing added/modified words highlighted in green
+  Widget _buildCleanedHighlight(String original, String cleaned) {
+    // Split into words preserving spaces
+    final words = cleaned.split(' ');
+    final originalWords = original.split(' ');
+
+    return RichText(
+      text: TextSpan(
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+        children: words.asMap().entries.map((entry) {
+          final index = entry.key;
+          final word = entry.value;
+
+          // Check if this word was added (not in original version)
+          final isAdded = !originalWords.contains(word);
+
+          return TextSpan(
+            text: index < words.length - 1 ? '$word ' : word,
+            style: TextStyle(
+              backgroundColor: isAdded
+                  ? Colors.green.withOpacity(0.4)
+                  : Colors.transparent,
+              color: isAdded ? Colors.green[100] : Colors.white,
+              fontWeight: isAdded ? FontWeight.bold : FontWeight.normal,
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('BookWash - EPUB Content Cleaner'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Text('BookWash - EPUB Content Cleaner'),
+            Text(
+              'Build: $_buildTime',
+              style: const TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          ],
+        ),
         centerTitle: true,
         elevation: 0,
         actions: [
@@ -956,22 +1117,10 @@ class _BookWashHomeState extends State<BookWashHome> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    _buildSliderSection(
-                      'Language',
-                      profanityLevel,
-                      (value) {
-                        final v = value.toInt();
-                        setState(() => profanityLevel = v);
-                        _saveLevel('profanity_level', v);
-                      },
-                      [
-                        '1 - G: No profanity or crude language • Modifies PG and above',
-                        '2 - PG: Mild language allowed • Modifies PG-13 and above',
-                        '3 - PG-13: Some strong language • Modifies R-rated content only',
-                        '4 - Unfiltered: No modifications',
-                      ],
-                    ),
-                    const SizedBox(height: 16),
+                    _buildLanguageWordFilter(),
+                    const SizedBox(height: 24),
+                    const Divider(),
+                    const SizedBox(height: 24),
                     _buildSliderSection(
                       'Adult Content',
                       sexualContentLevel,
@@ -1246,7 +1395,7 @@ class _BookWashHomeState extends State<BookWashHome> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        Text(
+                                        SelectableText(
                                           log,
                                           style: const TextStyle(
                                             fontSize: 11,
@@ -1255,38 +1404,9 @@ class _BookWashHomeState extends State<BookWashHome> {
                                           ),
                                         ),
                                         if (hasComparison)
-                                          Row(
-                                            children: [
-                                              TextButton(
-                                                onPressed: () {
-                                                  setState(() {
-                                                    if (key == null) return;
-                                                    if (_revealedComparisons
-                                                        .contains(key)) {
-                                                      _revealedComparisons
-                                                          .remove(key);
-                                                    } else {
-                                                      _revealedComparisons.add(
-                                                        key,
-                                                      );
-                                                    }
-                                                  });
-                                                },
-                                                child: Text(
-                                                  _revealedComparisons.contains(
-                                                        key,
-                                                      )
-                                                      ? 'Hide original content'
-                                                      : 'Reveal original content',
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        if (hasComparison &&
-                                            _revealedComparisons.contains(key))
                                           Container(
                                             margin: const EdgeInsets.only(
-                                              top: 6,
+                                              top: 0,
                                             ),
                                             padding: const EdgeInsets.all(8),
                                             decoration: BoxDecoration(
@@ -1311,17 +1431,20 @@ class _BookWashHomeState extends State<BookWashHome> {
                                                             .start,
                                                     children: [
                                                       const Text(
-                                                        'Original',
+                                                        'Original (Red = Removed)',
                                                         style: TextStyle(
                                                           fontWeight:
                                                               FontWeight.bold,
+                                                          color: Colors.red,
                                                         ),
                                                       ),
                                                       const SizedBox(height: 4),
-                                                      Text(
-                                                        _paraComparisons[key]![0],
-                                                        style: const TextStyle(
-                                                          fontSize: 11,
+                                                      SingleChildScrollView(
+                                                        scrollDirection:
+                                                            Axis.horizontal,
+                                                        child: _buildOriginalHighlight(
+                                                          _paraComparisons[key]![0],
+                                                          _paraComparisons[key]![1],
                                                         ),
                                                       ),
                                                     ],
@@ -1335,17 +1458,21 @@ class _BookWashHomeState extends State<BookWashHome> {
                                                             .start,
                                                     children: [
                                                       const Text(
-                                                        'Cleaned',
+                                                        'Cleaned (Green = Added/Modified)',
                                                         style: TextStyle(
                                                           fontWeight:
                                                               FontWeight.bold,
+                                                          color: Colors.green,
                                                         ),
                                                       ),
                                                       const SizedBox(height: 4),
-                                                      Text(
-                                                        _paraComparisons[key]![1],
-                                                        style: const TextStyle(
-                                                          fontSize: 11,
+                                                      // Show diff-highlighted comparison
+                                                      SingleChildScrollView(
+                                                        scrollDirection:
+                                                            Axis.horizontal,
+                                                        child: _buildCleanedHighlight(
+                                                          _paraComparisons[key]![0],
+                                                          _paraComparisons[key]![1],
                                                         ),
                                                       ),
                                                     ],
@@ -1568,16 +1695,35 @@ class _BookWashHomeState extends State<BookWashHome> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Chapter header
+          // Label to identify this is the active comparison UI
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.grey.shade800,
+              color: Colors.blue.shade900,
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(7),
                 topRight: Radius.circular(7),
               ),
             ),
+            child: const Row(
+              children: [
+                Icon(Icons.edit, size: 16, color: Colors.blue),
+                SizedBox(width: 8),
+                Text(
+                  '▶ ACTIVE COMPARISON (Step 4 Review)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Chapter header
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: Colors.grey.shade800),
             child: Row(
               children: [
                 const Icon(Icons.book, size: 16),
@@ -1594,74 +1740,275 @@ class _BookWashHomeState extends State<BookWashHome> {
               ],
             ),
           ),
-          // Side-by-side comparison
+          // Side-by-side comparison with highlighting and editable field
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Original
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.1),
-                      border: Border.all(color: Colors.red.withOpacity(0.3)),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Original',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.red,
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Original with word-level highlighting
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.1),
+                          border: Border.all(
+                            color: Colors.red.withOpacity(0.3),
                           ),
+                          borderRadius: BorderRadius.circular(4),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          change.original,
-                          style: const TextStyle(fontSize: 13),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Original (Red = Removed)',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red,
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Container(
+                              constraints: const BoxConstraints(maxHeight: 150),
+                              child: SingleChildScrollView(
+                                child: _buildOriginalHighlight(
+                                  change.original,
+                                  change.cleaned,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Cleaned
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.1),
-                      border: Border.all(color: Colors.green.withOpacity(0.3)),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Cleaned',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green,
+                    const SizedBox(width: 12),
+                    // Cleaned with word-level highlighting and editable field
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.1),
+                          border: Border.all(
+                            color: Colors.green.withOpacity(0.3),
                           ),
+                          borderRadius: BorderRadius.circular(4),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          change.cleaned,
-                          style: const TextStyle(fontSize: 13),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Cleaned (Green = Added/Modified)',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Container(
+                              constraints: const BoxConstraints(maxHeight: 150),
+                              child: SingleChildScrollView(
+                                child: _buildCleanedHighlight(
+                                  change.original,
+                                  change.cleaned,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildLanguageWordFilter() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
+          children: [
+            Text(
+              'Language Filtering',
+              style: TextStyle(fontWeight: FontWeight.w500, fontSize: 16),
+            ),
+            SizedBox(width: 8),
+            Tooltip(
+              message: 'Select specific words to filter from the book',
+              child: Icon(Icons.info_outline, size: 18),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Check words you want removed:',
+          style: TextStyle(fontSize: 13, color: Colors.grey),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.blue.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.info_outline, size: 16, color: Colors.blue),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'We will also remove variants of these words (e.g., "f*cking", "sh*tty") and similarly offensive language.',
+                  style: TextStyle(fontSize: 12, color: Colors.blue),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildWordGroup('Mild', [
+          'darn',
+          'gosh',
+          'heck',
+          'gee',
+          'jeez',
+        ], Colors.green),
+        const SizedBox(height: 12),
+        _buildWordGroup('Moderate', [
+          'damn',
+          'hell',
+          'crap',
+          'ass',
+          'piss',
+          'bummer',
+        ], Colors.orange),
+        const SizedBox(height: 12),
+        _buildWordGroup('Strong', [
+          'sh*t',
+          'b*tch',
+          'b*stard',
+          '*sshole',
+          'bullsh*t',
+        ], Colors.deepOrange),
+        const SizedBox(height: 12),
+        _buildWordGroup('Severe', ['f*ck', 'motherf*cker'], Colors.red),
+        const SizedBox(height: 12),
+        _buildWordGroup('Taking Name in Vain', [
+          'godd*mn',
+          'jesus christ',
+          'oh my god',
+        ], Colors.purple),
+      ],
+    );
+  }
+
+  Widget _buildWordGroup(String label, List<String> displayWords, Color color) {
+    // Map display words to actual keys
+    final Map<String, String> wordKeyMap = {
+      'sh*t': 'shit',
+      'b*tch': 'bitch',
+      'b*stard': 'bastard',
+      '*sshole': 'asshole',
+      'bullsh*t': 'bullshit',
+      'f*ck': 'fuck',
+      'motherf*cker': 'motherfucker',
+      'godd*mn': 'goddamn',
+    };
+
+    // Get actual keys for this group
+    final actualKeys = displayWords.map((d) => wordKeyMap[d] ?? d).toList();
+    final allSelected = actualKeys.every(
+      (key) => languageWordSelection[key] ?? false,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.start,
+          children: [
+            Container(
+              width: 4,
+              height: 16,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: color,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(width: 12),
+            TextButton.icon(
+              onPressed: isProcessing
+                  ? null
+                  : () {
+                      setState(() {
+                        for (final key in actualKeys) {
+                          languageWordSelection[key] = !allSelected;
+                        }
+                      });
+                      _saveLanguageWords();
+                    },
+              icon: Icon(
+                allSelected ? Icons.check_box : Icons.check_box_outline_blank,
+                size: 14,
+              ),
+              label: Text(
+                allSelected ? 'Deselect All' : 'Select All',
+                style: const TextStyle(fontSize: 11),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: displayWords.map((displayWord) {
+            final actualKey = wordKeyMap[displayWord] ?? displayWord;
+            return SizedBox(
+              width: 140,
+              child: CheckboxListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                visualDensity: VisualDensity.compact,
+                title: Text(displayWord, style: const TextStyle(fontSize: 13)),
+                value: languageWordSelection[actualKey] ?? false,
+                onChanged: isProcessing
+                    ? null
+                    : (bool? value) {
+                        setState(() {
+                          languageWordSelection[actualKey] = value ?? false;
+                        });
+                        _saveLanguageWords();
+                      },
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            );
+          }).toList(),
+        ),
+      ],
     );
   }
 

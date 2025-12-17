@@ -110,7 +110,6 @@ abstract class ApiService {
   /// Start processing a session
   Future<void> startProcessing({
     required String sessionId,
-    required int targetLanguage,
     required int targetAdult,
     required int targetViolence,
     required String model,

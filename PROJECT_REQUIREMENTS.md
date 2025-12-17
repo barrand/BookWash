@@ -21,37 +21,23 @@ BookWash moderates EPUB books using an AI model to remove or adjust language, se
   - Browse/upload an EPUB
   - Shows selected filename
 
-2. **Sensitivity Sliders** (1-5 scale, movie ratings)
+2. **Sensitivity Settings** 
    
-  **Language Sensitivity Slider**: Range 1-5
+  **Language Filtering**: Checkbox-based word selection
    
-   - **Level 1 - G Rated**: No profanity or crude language (Most censorship)
-     - **Removes:** ALL profanity, insults, and crude language
-     - **Examples removed:** jerk, fool, dope, stupid, idiot, dumb, crap, damn, hell, ass, bitch, f-words, all curse words
-     - **Keeps:** Clean language only
-     - **Result:** Suitable for all ages/young children
-   
-   - **Level 2 - PG Rated**: Mild language allowed (Heavy censorship)
-     - **Removes:** Strong profanity and crude language
-     - **Examples removed:** f-words, ass, asshole, bitch, bastard, more intense insults
-     - **Keeps:** Very mild expressions (darn, gosh, heck, jeez)
-     - **Result:** Family-friendly content
-   
-   - **Level 3 - PG-13 Rated**: Some strong language (Light censorship)
-     - **Removes:** F-words and extreme profanity
-     - **Examples removed:** fuck, fucking, fucked, motherfucker, c-words, extreme slurs
-     - **Keeps:** Strong language like ass, asshole, bitch, damn, hell, crap, bastard
-     - **Result:** Teenage-appropriate content
-   
-   - **Level 4 - R Rated**: Strong language allowed (Censorship of F-word only)
-     - **Removes:** Only f-word variations (fuck, fucking, fucked, motherfucker, etc.)
-     - **Keeps:** All other profanity including ass, asshole, bitch, damn, hell, crap, bastard, son of a bitch
-     - **Result:** Adult content with extreme profanity removed
-   
-   - **Level 5 - Unrated**: Everything allowed (No censorship)
-     - **Removes:** Nothing
-     - **Keeps:** All language including f-words, c-words, all profanity
-     - **Result:** Original unmodified content
+   - **How it works**: Select specific words/phrases you want to filter from a predefined list or add custom words
+   - **Predefined categories available**:
+     - Mild: darn, gosh, heck, gee, jeez
+     - Moderate: damn, hell, crap, ass, piss, bummer
+     - Strong: shit, bitch, bastard, asshole, bullshit
+     - Severe: fuck, motherfucker, cunt
+     - Religious: goddamn, jesus christ, oh my god
+   - **How filtering works**: 
+     - The AI removes the exact words you selected
+     - The AI also removes similar variants (e.g., if you select "shit", it also removes "shitty", "bullshit")
+     - Narrative descriptions like "he cursed" are preserved (only dialogue/narration showing the actual word is filtered)
+   - **Example**: If you select [damn, hell, shit, fuck], the AI will remove those words but keep other language
+   - **Result**: You get precise control over which language is filtered
 
   **Sexual Content Sensitivity Slider**: Range 1-5
    

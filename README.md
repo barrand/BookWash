@@ -15,10 +15,10 @@ Here is the cleaning screen when the app is doing it's magic.
 ## Features
 
 *   **Process EPUB Files**: Select any EPUB file from your local drive.
-*   **Customizable Filtering**: Set your desired content rating (G, PG, PG-13, R) for three categories:
-    *   Profanity
-    *   Sexual Content
-    *   Violence
+*   **Customizable Filtering**: Set your desired content ratings with:
+    *   **Language**: Checkbox-based selection of specific words to filter (e.g., select "damn", "hell", "shit", "fuck" or create your own custom list)
+    *   **Sexual Content**: Rating levels (G, PG, PG-13, R)
+    *   **Violence**: Rating levels (G, PG, PG-13, R)
 *   **AI-Powered Moderation**: Leverages the Google Gemini API to intelligently rate each chapter and then filter content that exceeds your chosen rating.
 *   **Smart Two-Pass System**:
     1.  **Rating Pass**: The AI first reads and rates each chapter without modifying it.
@@ -31,9 +31,14 @@ Here is the cleaning screen when the app is doing it's magic.
 
 BookWash reads an EPUB file, breaks it down into its constituent chapters, and then processes each chapter's text through Google's Gemini API.
 
-1.  **Chapter Rating**: Each chapter is sent to Gemini to get a content rating (G, PG, PG-13, R, or X) for profanity, sexual content, and violence.
+1.  **Chapter Rating**: Each chapter is sent to Gemini to get a content rating (G, PG, PG-13, R, or X) for sexual content and violence. Language is evaluated against your selected checkbox list of words to filter.
 2.  **Conditional Filtering**: The app compares the AI's rating to your selected sensitivity level. If the chapter's content is rated higher than your preference (e.g., rated 'R' for sexual content when you've selected 'PG'), it proceeds to the filtering step. Otherwise, it skips the chapter.
-3.  **Content Cleaning**: For chapters that need it, the text is sent back to Gemini with a detailed prompt instructing it to remove or rephrase the inappropriate content according to your rating. The prompt engineering is designed to be very strict, especially at G and PG levels, prioritizing content safety over narrative preservation if necessary.
+3.  **Content Cleaning**: For chapters that need it, the text is sent back to Gemini with a detailed prompt instructing it to:
+    - Remove or rephrase the selected inappropriate language words (from your checkbox selections)
+    - Remove or rephrase sexual content exceeding your rating
+    - Remove or rephrase violence exceeding your rating
+    
+    The prompt is dynamically generated based on exactly which content types you're filtering, prioritizing content safety over narrative preservation at stricter levels.
 4.  **EPUB Re-creation**: Once all chapters are processed, a new EPUB file is assembled with the cleaned content.
 
 ## Getting Started
