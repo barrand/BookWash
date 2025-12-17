@@ -38,6 +38,7 @@ class WebApiService implements ApiService {
     // On web, API key is stored server-side, not needed here
   }
 
+  @override
   void setAuth(String username, String password) {
     final credentials = base64Encode(utf8.encode('$username:$password'));
     _authHeader = 'Basic $credentials';
@@ -86,7 +87,6 @@ class WebApiService implements ApiService {
   @override
   Future<void> startProcessing({
     required String sessionId,
-    required int targetLanguage,
     required int targetAdult,
     required int targetViolence,
     required String model,
@@ -100,7 +100,6 @@ class WebApiService implements ApiService {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: {
-        'target_language': targetLanguage.toString(),
         'target_adult': targetAdult.toString(),
         'target_violence': targetViolence.toString(),
         'model': model,

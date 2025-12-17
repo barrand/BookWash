@@ -1,4 +1,5 @@
 /// Data models for .bookwash file format
+library;
 
 class BookWashFile {
   String version;

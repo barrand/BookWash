@@ -183,8 +183,9 @@ class _BookWashViewerState extends State<BookWashViewer> {
 
   void _acceptChange() {
     if (_pendingChanges.isEmpty ||
-        _currentChangeIndex >= _pendingChanges.length)
+        _currentChangeIndex >= _pendingChanges.length) {
       return;
+    }
 
     final entry = _pendingChanges[_currentChangeIndex];
     setState(() {
@@ -206,8 +207,9 @@ class _BookWashViewerState extends State<BookWashViewer> {
 
   void _rejectChange() {
     if (_pendingChanges.isEmpty ||
-        _currentChangeIndex >= _pendingChanges.length)
+        _currentChangeIndex >= _pendingChanges.length) {
       return;
+    }
 
     final entry = _pendingChanges[_currentChangeIndex];
     setState(() {
@@ -227,8 +229,9 @@ class _BookWashViewerState extends State<BookWashViewer> {
 
   void _resetChange() {
     if (_pendingChanges.isEmpty ||
-        _currentChangeIndex >= _pendingChanges.length)
+        _currentChangeIndex >= _pendingChanges.length) {
       return;
+    }
 
     // Reset to original LLM suggestion (we'd need to store this separately)
     // For now, just reload from the change object

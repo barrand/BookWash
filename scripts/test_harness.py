@@ -657,7 +657,9 @@ class PipelineTestChapter:
     name: str                    # Short name for the test
     paragraphs: List[str]        # List of paragraph texts
     expected_original_ratings: dict  # {'language': Rating, 'adult': Rating, 'violence': Rating}
-    target_ratings: dict         # {'language': int, 'adult': int, 'violence': int} - target levels (1-5)
+    language_words: List[str]    # List of specific language words to filter (checkboxes)
+    target_adult_rating: Rating  # Target adult content rating (no checkboxes)
+    target_violence_rating: Rating  # Target violence rating (no checkboxes)
     
     def get_content(self) -> str:
         """Join paragraphs with double newlines."""
@@ -690,7 +692,9 @@ def build_pipeline_test_chapters() -> List[PipelineTestChapter]:
                 '''The station groaned around her, metal flexing in ways it wasn't designed to flex. Somewhere below, she heard the hiss of another micro-leak being sealed. Eighteen hours. She'd pulled off miracles before, but never with stakes this high. Never with this many lives hanging on her decisions. "Alright, you bastard universe," she muttered to herself. "Let's see what you've got."''',
             ],
             expected_original_ratings={'language': Rating.R, 'adult': Rating.G, 'violence': Rating.G},
-            target_ratings={'language': 2, 'adult': 2, 'violence': 5},  # PG language target
+            language_words=['damn', 'hell', 'shit', 'fuck'],  # Remove these specific words to get to PG/PG-13
+            target_adult_rating=Rating.PG,
+            target_violence_rating=Rating.G,
         ),
         
         # =======================================================================
@@ -710,7 +714,9 @@ def build_pipeline_test_chapters() -> List[PipelineTestChapter]:
                 '''As the class filed out, Theron lingered, staring at the scorch marks on the floor. His father had been the greatest summoner of his generation, able to call forth beings of pure elemental fury with a whispered word. And here was Theron, his only heir, accidentally teleporting badgers. "Damn," he said softly to himself, then louder: "Damn, damn, damn." Inkblot cawed in what might have been sympathy. Or mockery. With that bird, it was impossible to tell.''',
             ],
             expected_original_ratings={'language': Rating.PG13, 'adult': Rating.G, 'violence': Rating.G},
-            target_ratings={'language': 3, 'adult': 2, 'violence': 5},  # PG-13 language target (should pass as-is)
+            language_words=['damn', 'hell', 'crap'],  # PG-13 words - keep these, no aggressive filtering needed
+            target_adult_rating=Rating.PG,
+            target_violence_rating=Rating.G,
         ),
         
         # =======================================================================
@@ -730,7 +736,9 @@ def build_pipeline_test_chapters() -> List[PipelineTestChapter]:
                 '''Afterward, she lay in his arms, her hair tumbled loose across his chest, watching the candles gutter low. Tomorrow there would be consequences—society's censure, her family's disappointment, the impossible choice between reputation and desire. But that was tomorrow. Tonight, she traced patterns on his skin and listened to his heartbeat slow, and allowed herself to pretend that this stolen moment could last forever.''',
             ],
             expected_original_ratings={'language': Rating.G, 'adult': Rating.R, 'violence': Rating.G},
-            target_ratings={'language': 2, 'adult': 2, 'violence': 5},  # PG adult target
+            language_words=[],  # No language filtering needed (no profanity)
+            target_adult_rating=Rating.PG,  # Target: reduce from R to PG (remove explicit scenes)
+            target_violence_rating=Rating.G,
         ),
         
         # =======================================================================
@@ -750,7 +758,9 @@ def build_pipeline_test_chapters() -> List[PipelineTestChapter]:
                 '''The killer was still out there. The journal's final entry was dated just three days ago, and it described a woman with red hair and green eyes who worked at the coffee shop on Meridian Street. Santos pulled out her phone, her fingers already dialing, knowing that somewhere in the city, another photograph was about to be added to that basement wall.''',
             ],
             expected_original_ratings={'language': Rating.G, 'adult': Rating.G, 'violence': Rating.R},
-            target_ratings={'language': 2, 'adult': 2, 'violence': 3},  # PG-13 violence target
+            language_words=[],  # No language filtering
+            target_adult_rating=Rating.G,
+            target_violence_rating=Rating.PG13,  # Reduce graphic gore detail
         ),
         
         # =======================================================================
@@ -770,7 +780,9 @@ def build_pipeline_test_chapters() -> List[PipelineTestChapter]:
                 '''Jack opened the folder and felt his stomach turn. Photographs, documents, testimony—enough to bring down half the city's power structure. "Why give this to me?" he asked. Lilith stood, adjusting her dress in a way that drew his eyes despite himself. "Because you're one of the few honest men left in this corrupt hellhole. And because you're cute when you're trying not to stare at my chest." She vanished in a whisper of perfume and brimstone, leaving him alone with evidence that would either make his career or get him killed.''',
             ],
             expected_original_ratings={'language': Rating.R, 'adult': Rating.PG13, 'violence': Rating.G},
-            target_ratings={'language': 2, 'adult': 2, 'violence': 5},  # PG targets
+            language_words=['fuck', 'asshole', 'goddamn', 'shit'],  # Remove strong profanity
+            target_adult_rating=Rating.PG,  # Tone down suggestive descriptions
+            target_violence_rating=Rating.G,
         ),
         
         # =======================================================================
@@ -790,7 +802,9 @@ def build_pipeline_test_chapters() -> List[PipelineTestChapter]:
                 '''The helicopter arrived twenty-three minutes later, its rotors kicking up dust clouds that stung his eyes. As they loaded the wounded, Morrison found himself staring at the body bags lined up beside the road. Williams. Kowalski. Pham. Gutierrez. Four more names for the wall, four more letters he'd have to help write. The war ground on, indifferent to their sacrifice, and tomorrow there would be another patrol, another mission, another chance to add to the butcher's bill.''',
             ],
             expected_original_ratings={'language': Rating.R, 'adult': Rating.G, 'violence': Rating.R},
-            target_ratings={'language': 2, 'adult': 2, 'violence': 3},  # PG language, PG-13 violence
+            language_words=['fuck', 'shit'],  # Remove f-word and s-word
+            target_adult_rating=Rating.G,
+            target_violence_rating=Rating.PG13,  # Reduce gore (but keep military realism)
         ),
         
         # =======================================================================
@@ -810,7 +824,9 @@ def build_pipeline_test_chapters() -> List[PipelineTestChapter]:
                 '''Later, as they lay tangled among scattered books and discarded clothing, the fire burning low in the grate, Catherine knew her life had irrevocably changed. There could be no going back to propriety now, no pretending she was still the respectable Miss Blackwood. She had become something else entirely—his lover, his secret, his downfall or his salvation. The storm had passed, but what it had awakened in Thornwood Manor would not be so easily quieted.''',
             ],
             expected_original_ratings={'language': Rating.G, 'adult': Rating.R, 'violence': Rating.G},
-            target_ratings={'language': 2, 'adult': 2, 'violence': 5},  # PG adult target
+            language_words=[],  # No language filtering
+            target_adult_rating=Rating.PG,  # Remove explicit sexual content, keep romantic tension
+            target_violence_rating=Rating.G,
         ),
         
         # =======================================================================
@@ -830,7 +846,9 @@ def build_pipeline_test_chapters() -> List[PipelineTestChapter]:
                 '''An hour later, she reached the safehouse—a converted server farm hidden beneath an abandoned temple. The resistance cell was already waiting, their faces a mix of hope and desperate fear. "You got it?" their leader asked. Razor pulled the chip from her pocket, its surface still warm from her body heat. "Two men died for this shit," she said flatly. "It better be worth it." The leader's smile was sharp as a blade. "Oh, it will be. When this data goes public, Helix's human experimentation program will be exposed to the whole damn world. Those bastards are finally going to burn."''',
             ],
             expected_original_ratings={'language': Rating.R, 'adult': Rating.G, 'violence': Rating.R},
-            target_ratings={'language': 2, 'adult': 2, 'violence': 3},  # PG language, PG-13 violence
+            language_words=['shit', 'fuck', 'damn', 'bastards'],  # Remove strong profanity
+            target_adult_rating=Rating.G,
+            target_violence_rating=Rating.PG13,  # Reduce graphic combat detail
         ),
     ]
 
@@ -838,10 +856,12 @@ def build_pipeline_test_chapters() -> List[PipelineTestChapter]:
 def create_temp_bookwash_file(chapter: PipelineTestChapter, temp_dir: Path) -> Path:
     """Create a temporary .bookwash file from a test chapter."""
     now = datetime.now().isoformat()
+    # Note: With checkbox-based language filtering, we don't need numeric targets
+    # The actual filtering is controlled by the GeminiClient's language_words list
     content = f'''#BOOKWASH 1.0
 #SOURCE: test_harness_pipeline.epub
 #CREATED: {now}
-#SETTINGS: target_language={chapter.target_ratings['language']} target_sexual={chapter.target_ratings['adult']} target_violence={chapter.target_ratings['violence']}
+#SETTINGS: target_adult={chapter.target_adult_rating.value} target_violence={chapter.target_violence_rating.value}
 
 #CHAPTER: 1
 #TITLE: {chapter.name}
@@ -884,13 +904,16 @@ def run_pipeline_tests(chapters: List[PipelineTestChapter], model: str = "gemini
         
         for i, chapter in enumerate(chapters, 1):
             print(f"\n[{i}/{len(chapters)}] Testing: {chapter.name}")
-            print(f"  Targets: lang={chapter.target_ratings['language']}, adult={chapter.target_ratings['adult']}, viol={chapter.target_ratings['violence']}")
+            print(f"  Language words to filter: {chapter.language_words if chapter.language_words else '[none]'}")
+            print(f"  Target adult: {chapter.target_adult_rating.name}, violence: {chapter.target_violence_rating.name}")
             print(f"  Expected original: lang={chapter.expected_original_ratings['language'].name}, adult={chapter.expected_original_ratings['adult'].name}, viol={chapter.expected_original_ratings['violence'].name}")
             
             result = {
                 'name': chapter.name,
                 'expected_original': chapter.expected_original_ratings,
-                'targets': chapter.target_ratings,
+                'language_words': chapter.language_words,
+                'target_adult': chapter.target_adult_rating,
+                'target_violence': chapter.target_violence_rating,
                 'pre_clean_rating': None,
                 'post_clean_rating': None,
                 'num_changes': 0,
@@ -907,13 +930,14 @@ def run_pipeline_tests(chapters: List[PipelineTestChapter], model: str = "gemini
                 # Parse it
                 bw = bookwash_llm.parse_bookwash(filepath)
                 
-                # Create Gemini client
-                client = bookwash_llm.GeminiClient(api_key=api_key, model=model)
+                # Create Gemini client with language words (checkbox-based)
+                client = bookwash_llm.GeminiClient(api_key=api_key, model=model, language_words=chapter.language_words)
                 
-                # Get targets from test chapter
-                target_lang = chapter.target_ratings['language']
-                target_adult = chapter.target_ratings['adult']
-                target_viol = chapter.target_ratings['violence']
+                # For now, pass dummy values for lang/adult/viol (they're not used with language_words)
+                # The actual filtering is controlled by the GeminiClient's language_words list
+                target_lang = 1  # Dummy value
+                target_adult = chapter.target_adult_rating.value
+                target_viol = chapter.target_violence_rating.value
                 
                 # PASS A: Rate chapters
                 print("  Running Pass A (rate)...")
@@ -971,21 +995,20 @@ def run_pipeline_tests(chapters: List[PipelineTestChapter], model: str = "gemini
                 
                 # Check if final ratings meet targets
                 if result['post_clean_rating']:
-                    lang_ok = result['post_clean_rating']['language'].value <= chapter.target_ratings['language']
-                    adult_ok = result['post_clean_rating']['adult'].value <= chapter.target_ratings['adult']
-                    viol_ok = result['post_clean_rating']['violence'].value <= chapter.target_ratings['violence']
-                    result['success'] = lang_ok and adult_ok and viol_ok
+                    # For language: we only care about adult and violence targets now
+                    # (language is controlled by the specific words list, not a rating level)
+                    adult_ok = result['post_clean_rating']['adult'].value <= chapter.target_adult_rating.value
+                    viol_ok = result['post_clean_rating']['violence'].value <= chapter.target_violence_rating.value
+                    result['success'] = adult_ok and viol_ok
                     
                     if result['success']:
-                        print(f"  ✅ PASS - All ratings meet targets")
+                        print(f"  ✅ PASS - All targets met")
                     else:
                         issues = []
-                        if not lang_ok:
-                            issues.append(f"language ({result['post_clean_rating']['language'].name} > target {chapter.target_ratings['language']})")
                         if not adult_ok:
-                            issues.append(f"adult ({result['post_clean_rating']['adult'].name} > target {chapter.target_ratings['adult']})")
+                            issues.append(f"adult ({result['post_clean_rating']['adult'].name} > target {chapter.target_adult_rating.name})")
                         if not viol_ok:
-                            issues.append(f"violence ({result['post_clean_rating']['violence'].name} > target {chapter.target_ratings['violence']})")
+                            issues.append(f"violence ({result['post_clean_rating']['violence'].name} > target {chapter.target_violence_rating.name})")
                         print(f"  ❌ FAIL - Issues: {', '.join(issues)}")
                 
             except Exception as e:
@@ -1026,6 +1049,8 @@ def run_pipeline_tests(chapters: List[PipelineTestChapter], model: str = "gemini
     for r in results:
         status = "✅ PASS" if r['success'] else ("❌ ERROR" if r['error'] else "❌ FAIL")
         print(f"  {r['name']}: {status}")
+        print(f"    Language words: {r['language_words'] if r['language_words'] else '[none]'}")
+        print(f"    Targets: adult={r['target_adult'].name}, violence={r['target_violence'].name}")
         if r['pre_clean_rating']:
             pre = r['pre_clean_rating']
             print(f"    Pre:  lang={pre['language'].name}, adult={pre['adult'].name}, viol={pre['violence'].name}")

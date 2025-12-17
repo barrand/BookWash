@@ -1,5 +1,6 @@
 /// Stub implementation - should never be used at runtime
 /// This file exists for conditional import fallback
+library;
 
 import 'api_service.dart';
 

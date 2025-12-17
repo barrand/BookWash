@@ -59,7 +59,6 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
   String progressPhase = '';
 
   // Content levels
-  int languageLevel = 2; // Default: PG
   int adultLevel = 2; // Default: PG
   int violenceLevel = 3; // Default: PG-13
   String selectedModel = 'gemini-2.0-flash';
@@ -304,7 +303,6 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
       // Start processing
       await _api.startProcessing(
         sessionId: session.sessionId,
-        targetLanguage: languageLevel,
         targetAdult: adultLevel,
         targetViolence: violenceLevel,
         model: selectedModel,
@@ -356,7 +354,6 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
 
             await _api.startProcessing(
               sessionId: session.sessionId,
-              targetLanguage: languageLevel,
               targetAdult: adultLevel,
               targetViolence: violenceLevel,
               model: selectedModel,
@@ -635,14 +632,6 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
                   title: '2. Set Target Content Levels',
                   child: Column(
                     children: [
-                      _buildSlider(
-                        label: 'Language',
-                        value: languageLevel,
-                        onChanged: isProcessing
-                            ? null
-                            : (v) => setState(() => languageLevel = v.toInt()),
-                      ),
-                      const SizedBox(height: 16),
                       _buildSlider(
                         label: 'Adult Content',
                         value: adultLevel,

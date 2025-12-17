@@ -443,9 +443,6 @@ async def process_book_async(
         env["GEMINI_API_KEY"] = api_key
         env["PYTHONUNBUFFERED"] = "1"
         
-        # Determine number of workers (use environment variable or default to 3)
-        num_workers = int(os.environ.get("BOOKWASH_WORKERS", "3"))
-        
         process = await asyncio.create_subprocess_exec(
             sys.executable, "-u", str(SCRIPTS_DIR / "bookwash_llm.py"),
             "--rate", "--clean",
@@ -453,7 +450,6 @@ async def process_book_async(
             "--sexual", str(target_adult),
             "--violence", str(target_violence),
             "--model", model,
-            "--workers", str(num_workers),
             "--output-dir", str(session_dir),
             str(bookwash_path),
             stdout=asyncio.subprocess.PIPE,
@@ -464,7 +460,7 @@ async def process_book_async(
         # Store process in session for cancellation
         session["process_pid"] = process.pid
         
-        add_log(f"⏱️ Using model: {model} ({num_workers} workers)")
+        add_log(f"⏱️ Using model: {model}")
         add_log("")
         
         # Stream output to logs (async) with heartbeat if quiet
