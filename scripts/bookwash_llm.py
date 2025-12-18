@@ -80,6 +80,19 @@ FALLBACK_MODELS = [
 ]
 API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 
+def obfuscate_word(word: str) -> str:
+    """Obfuscate a profane word by replacing a vowel with *.
+    
+    Examples: shit -> sh*t, fuck -> f*ck, asshole -> *sshole
+    """
+    vowels = 'aeiouAEIOU'
+    result = list(word)
+    for i, char in enumerate(result):
+        if char in vowels:
+            result[i] = '*'
+            break
+    return ''.join(result)
+
 
 # --- Data Classes ---
 
@@ -1186,12 +1199,6 @@ CRITICAL INSTRUCTIONS:
    • If ANY BLASPHEMOUS words are in target list (goddamn, jesus christ, oh my god):
      → Remove all blasphemous uses of religious terms as expletives
      → Keep genuine religious usage in context (prayer, worship, reverent discussion)
-   
-4. REPLACE with appropriate alternatives based on context:
-   - Mild expletives: → "darn", "heck", "gosh"
-   - Moderate cursing: → "blast", "dang", "crud"
-   - Strong emotion: → rephrase to show emotion ("he shouted angrily")
-   - Descriptive terms: → use neutral equivalents ("jerk" instead of "asshole")
 
 KEEP all other words not in the removal list or similar severity.
 
@@ -1202,10 +1209,11 @@ CONTEXT-AWARE FILTERING:
 - Religious phrases used genuinely (prayer, worship) may be kept, but blasphemous usage must be removed
 
 EXAMPLES:
-❌ "What the hell is going on?" → ✅ "What is going on?"
+❌ "What the hell is going on?" → ✅ "What in the worldis going on?"
 ❌ "This is bullshit!" → ✅ "This is ridiculous!"
 ❌ "He's a real bastard." → ✅ "He's a real jerk."
 ❌ "Fuck this!" → ✅ "Forget this!"
+❌ "You are an asshole!" → ✅ "You are a real piece of work!!"
 ❌ "That goddamn idiot..." → ✅ "That foolish person..."""
             else:
                 # Fallback if no word list provided (shouldn't happen with new system)
@@ -1573,6 +1581,439 @@ def _set_change_cleaned(chapter, change_id: str, cleaned_text: str):
     chapter.content_lines = new_lines
 
 
+# --- Focused Cleaning Prompts (New Simplified System) ---
+
+def build_language_cleaning_prompt(language_words: list) -> str:
+    """Build a focused prompt for language-only cleaning.
+    
+    This is word-list based, not level-based. We categorize the words
+    to determine severity and provide context-appropriate replacements.
+    """
+    if not language_words:
+        return ""
+    
+    # Categorize words by severity to give better replacement guidance
+    words_lower = [w.lower() for w in language_words]
+    
+    mild_words = [w for w in language_words if w.lower() in ['darn', 'gosh', 'heck', 'gee', 'jeez', 'dang']]
+    moderate_words = [w for w in language_words if w.lower() in ['damn', 'hell', 'crap', 'ass', 'piss', 'bummer']]
+    strong_words = [w for w in language_words if w.lower() in ['shit', 'bitch', 'bastard', 'asshole', 'bullshit']]
+    severe_words = [w for w in language_words if w.lower() in ['fuck', 'fucking', 'motherfucker', 'cunt']]
+    blasphemous = [w for w in language_words if w.lower() in ['goddamn', 'jesus christ', 'oh my god']]
+    
+    # Build replacement guidance based on what's in the list
+    replacement_rules = []
+    
+    if severe_words:
+        replacement_rules.append("""SEVERE PROFANITY (fuck, motherfucker, cunt):
+   - Remove entirely OR rephrase the sentence to convey emotion without the word
+   - "What the fuck?" → "What?" or "What is going on?"
+   - "Fuck you!" → Remove the line, or "Get away from me!"
+   - "fucking idiot" → "complete idiot" or just "idiot"
+   - "motherfucker" → Remove entirely""")
+    
+    if strong_words:
+        replacement_rules.append("""STRONG PROFANITY (shit, bitch, bastard, asshole, bullshit):
+   - "shit" → "crud" or remove ("Oh shit!" → "Oh no!")
+   - "bullshit" → "nonsense" or "ridiculous"
+   - "bitch" → "jerk", "idiot", "sissy" or remove
+   - "bastard" → "jerk" or "scoundrel"
+   - "asshole" → "jerk", "fool", "dork" or remove
+   - "son of a bitch" → remove entirely""")
+    
+    if moderate_words:
+        replacement_rules.append("""MODERATE PROFANITY (damn, hell, crap, ass):
+   - "damn" → "curses" or remove ("Damn it!" → "Darn it!" or just remove)
+   - "hell" → rephrase ("What the hell" → "What on earth")
+   - "crap" → "crud" or "junk"
+   - "ass" → "butt" or "rear" or remove""")
+    
+    if mild_words:
+        replacement_rules.append("""MILD EXCLAMATIONS (darn, gosh, heck, gee, jeez):
+   - Remove or replace with neutral expressions
+   - "Darn it!" → "Oh no!" or remove
+   - "Gosh" → "Wow" or remove
+   - "Jeez" → remove or "Wow" """)
+    
+    if blasphemous:
+        replacement_rules.append("""BLASPHEMOUS EXPRESSIONS (goddamn, jesus christ as expletive, oh my god):
+   - "goddamn" → "holy cow" or remove
+   - "Jesus Christ!" (as expletive) → "Good grief!" or remove
+   - "Oh my god!" (as expletive) → "Oh my!" or "Oh my goodness!"
+   - Keep genuine religious usage (prayer, worship) unchanged""")
+    
+    replacement_section = "\n\n".join(replacement_rules) if replacement_rules else "Replace with appropriate neutral alternatives."
+    
+    return f"""You are cleaning profanity from a book. Your ONLY task is to replace specific words.
+
+WORDS TO REMOVE: {', '.join(language_words)}
+
+CRITICAL RULES:
+1. Return ONLY the cleaned text - no explanations, no commentary
+2. Preserve paragraph structure EXACTLY - same line breaks
+3. DO NOT change anything else - keep all other content identical
+4. Narrative descriptions like "he cursed" or "she swore" are ALLOWED - only remove actual profane words shown
+
+SENTENCE REPAIR (VERY IMPORTANT):
+- NEVER leave a sentence starting with just "It," or "This," - that is broken grammar
+- If a profane word starts a sentence like "Fuck this" or "Fuck it", you MUST rewrite the ENTIRE sentence
+- Examples of BROKEN output to AVOID:
+  - "It," he muttered  ← WRONG
+  - "This," he screamed ← WRONG
+- Correct rewrites:
+  - "Fuck it" → "Whatever" or "Forget it" or "I don't care" or remove the sentence
+  - "Fuck this" → "I'm done with this" or "This is pointless" or remove
+  - "Fuck everything" → "I hate everything" or "Everything is terrible" or remove
+
+REPLACEMENT GUIDANCE:
+
+{replacement_section}
+
+GENERAL PRINCIPLES:
+- Preserve the emotional intensity when possible
+- If a word is used for emphasis, the replacement should carry similar weight
+- When removing a word leaves awkward phrasing, REWRITE the sentence to be grammatically correct
+- Don't add new ideas, but DO fix broken grammar caused by word removal
+
+Text to clean:
+"""
+
+
+def build_adult_cleaning_prompt(target_sexual: int) -> str:
+    """Build a focused prompt for adult content cleaning.
+    
+    Each level has very specific, bespoke rules for what's allowed and what must go.
+    """
+    
+    if target_sexual == 1:  # G rating
+        return """You are cleaning adult/romantic content from a book to achieve a G (General Audiences) rating.
+
+G RATING REQUIREMENTS - NO romantic or sensual content at all:
+
+MUST REMOVE:
+- ALL kissing (even brief pecks)
+- ALL romantic embraces or holding
+- ANY physical attraction descriptions ("she was beautiful", "his eyes lingered")
+- Dancing together romantically
+- Hand-holding in romantic context
+- Longing looks, racing hearts from attraction
+- ANY clothing descriptions that emphasize appearance
+- ANY mention of dating, romance, or relationships beyond friendship
+
+ALLOWED:
+- Friendly hugs (clearly platonic)
+- Family affection (parent-child)
+- Handshakes
+- Characters described neutrally without attraction focus
+
+REPLACEMENT APPROACH:
+- Convert romantic scenes to friendly/platonic interactions
+- "They kissed goodbye" → "They said goodbye"
+- "She noticed how handsome he was" → Remove entirely
+- "They danced together, bodies close" → "They enjoyed the event"
+- "His heart raced when she smiled" → "He smiled back"
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve paragraph structure EXACTLY
+3. When in doubt, REMOVE rather than keep
+
+Text to clean:
+"""
+
+    elif target_sexual == 2:  # PG rating
+        return """You are cleaning adult/romantic content from a book to achieve a PG (Parental Guidance) rating.
+
+PG RATING REQUIREMENTS - Very mild romance only. Think Disney movies.
+
+ALLOWED (keep these):
+- Brief, innocent kiss (peck on lips or cheek)
+- Hand-holding
+- Friendly/warm hugs (platonic-feeling)
+- Simple statements of attraction ("She thought he was handsome")
+- Saying "I love you"
+
+MUST REMOVE COMPLETELY (these have NO place in PG content):
+- Passionate or lingering kisses (more than a brief moment)
+- "Lips parted", "deepened the kiss", "tongues met"
+- Body pressed against body
+- Hands roaming, caressing, exploring
+- ANY arousal cues (racing hearts from desire, flushed with want, breath catching)
+- Post-intimacy scenes ("tangled in sheets", "afterward they lay together")
+- Implied sex ("the door closed behind them", "they spent the night")
+- Revealing clothing descriptions (cleavage, bare skin emphasis, tight clothes on curves)
+- Focus on body parts in sensual context (breasts, thighs, hips, curves)
+- Lap-sitting, straddling, grinding
+- Strip clubs, gentlemen's clubs, or similar adult venues and activities
+- Private dances, lap dances, or any performance with sexual undertones
+- Suggestive dialogue ("Touch me", "I want you", "You're so hard/wet")
+- Characters in underwear/lingerie described sensuously
+- ANY physical arousal mentioned or implied
+- Escorts, "companions", or transactional intimacy
+
+REPLACEMENT APPROACH:
+- Passionate kiss → brief kiss ("He kissed her quickly")
+- Extended embrace → simple hug ("They hugged")
+- Post-intimacy scene → time skip ("The next morning...")
+- Revealing outfit → neutral clothing mention ("She wore a dress")
+- Strip club/adult venue scene → REMOVE ENTIRELY or replace with: "They spent time at a lounge."
+- Suggestive dialogue → remove or make neutral ("Touch me" → remove)
+- Private dance → REMOVE ENTIRELY or: "They talked."
+- Physical arousal → REMOVE the sentence
+
+AGGRESSIVE REMOVAL IS OKAY:
+- If a paragraph is mostly explicit content, replace it with a single neutral sentence or remove it
+- It's better to cut too much than to leave PG-inappropriate content
+- Example: A whole explicit paragraph → "They shared a moment together." or just remove it
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve paragraph structure where possible, but removal is acceptable
+3. When in doubt, REMOVE rather than try to salvage
+
+Text to clean:
+"""
+
+    elif target_sexual == 3:  # PG-13 rating
+        return """You are cleaning adult/romantic content from a book to achieve a PG-13 rating.
+
+PG-13 RATING REQUIREMENTS - Passionate romance allowed, no explicit content:
+
+ALLOWED (keep these):
+- Passionate, extended kissing
+- Strong embraces, bodies close
+- Implied intimacy with fade-to-black ("Later that night..." then skip)
+- Sensual tension and buildup
+- Brief mentions of attraction to body ("her curves", "his muscular arms")
+- Post-intimacy morning-after scenes (non-explicit)
+- Characters in bed together (without explicit activity)
+- Racing hearts, flushed skin, desire
+
+MUST REMOVE:
+- Explicit sexual activity (any description of the act itself)
+- Nudity described in detail
+- Anatomical descriptions (genitalia, explicit breast descriptions beyond "cleavage")
+- Touching of intimate areas
+- Explicit arousal descriptions (erections, wetness)
+- Graphic physical sensations during intimacy
+- Sexual dialogue/dirty talk
+
+REPLACEMENT APPROACH:
+- Explicit scene → fade to black: "They fell into bed together. Later..."
+- Detailed nudity → implied: "She undressed" (don't describe what's revealed)
+- Explicit touching → passionate embrace: "Their hands explored" → "They held each other close"
+- Graphic sensations → emotional: Focus on emotional connection, skip physical details
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve paragraph structure EXACTLY
+3. Keep the passion and emotion, remove explicit physical details
+
+Text to clean:
+"""
+
+    else:  # Level 4 (R) or 5 (Unrated) - no filtering needed
+        return """You are reviewing content. The target allows ALL adult content.
+
+NO FILTERING REQUIRED - Return the text exactly as-is.
+
+Text to return unchanged:
+"""
+
+
+def build_violence_cleaning_prompt(target_violence: int) -> str:
+    """Build a focused prompt for violence content cleaning.
+    
+    Each level has very specific, bespoke rules for what's allowed and what must go.
+    """
+    
+    if target_violence == 1:  # G rating
+        return """You are cleaning violent content from a book to achieve a G (General Audiences) rating.
+
+G RATING REQUIREMENTS - NO physical violence:
+
+MUST REMOVE:
+- ALL physical fighting (punches, kicks, strikes)
+- ALL weapons (guns, knives, swords - even mentioned)
+- ANY injury descriptions (cuts, bruises, blood)
+- Threats of physical harm
+- Characters physically hurting each other
+- Hunting or killing animals
+- Death (even off-screen)
+- War or battle scenes
+
+ALLOWED:
+- Verbal arguments and disagreements
+- Characters being upset or angry (emotions only)
+- Non-violent competition (races, games)
+- Mild cartoon-style mishaps (slipping, bumping into things - no injury)
+
+REPLACEMENT APPROACH:
+- Fight scene → argument: "They fought" → "They argued intensely"
+- Weapon → remove: "He drew his sword" → "He stood ready"
+- Injury → remove: "Blood ran down his face" → Remove entirely
+- Death → euphemism: "He killed the guard" → "He got past the guard"
+- Battle → summary: Extended fight scene → "The conflict was resolved"
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve paragraph structure EXACTLY
+3. Convert physical conflict to verbal/emotional conflict where possible
+
+Text to clean:
+"""
+
+    elif target_violence == 2:  # PG rating
+        return """You are cleaning violent content from a book to achieve a PG (Parental Guidance) rating.
+
+PG RATING REQUIREMENTS - Mild action only:
+
+ALLOWED (keep these):
+- Brief, non-detailed scuffles
+- Pushing, shoving (no injury result)
+- Characters falling or getting knocked down
+- Weapons mentioned (not used graphically)
+- Implied danger without showing harm
+- Cartoon-style action (chase scenes, slapstick)
+
+MUST REMOVE:
+- Blood of any kind
+- Visible injuries (cuts, wounds, bruises described)
+- Pain descriptions ("agony", "searing pain")
+- Weapons making contact with bodies
+- Death shown or described (off-screen death can be implied)
+- Graphic fight choreography (blow-by-blow)
+- Sounds of violence (bones cracking, flesh tearing)
+
+REPLACEMENT APPROACH:
+- "Blood dripped from the wound" → "He was hurt"
+- "The knife sliced into his arm" → "He dodged the attack"
+- Detailed fight → summary: "They fought" or "A scuffle ensued"
+- Death description → implication: "He was killed" → "He didn't survive"
+- Injury detail → vague: "His broken ribs" → "He was injured"
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve paragraph structure EXACTLY
+3. Keep the action, remove the graphic consequences
+
+Text to clean:
+"""
+
+    elif target_violence == 3:  # PG-13 rating
+        return """You are cleaning violent content from a book to achieve a PG-13 rating.
+
+PG-13 RATING REQUIREMENTS - Action violence allowed, no graphic gore:
+
+ALLOWED (keep these):
+- Combat and fighting with moderate detail
+- Blood mentioned (not dwelt upon)
+- Injuries described briefly (broken bones, cuts, gunshot wounds)
+- Weapons used in action scenes
+- Death (shown or implied, not lingered on)
+- War/battle scenes
+- Martial arts, sword fights, gun battles
+- Pain acknowledged
+
+MUST REMOVE:
+- Graphic gore (organs visible, bones protruding)
+- Torture scenes with detail
+- Prolonged suffering descriptions
+- Extremely detailed wound descriptions
+- Sadistic violence (enjoying causing pain)
+- Dismemberment described graphically
+- Blood described in excessive detail (pools, spraying, arterial)
+- Bodies described in graphic decay
+
+REPLACEMENT APPROACH:
+- Gore detail → simple wound: "intestines spilled out" → "a severe wound"
+- Torture → summary: Extended torture → "He was beaten for information"
+- Graphic death → quick: Long death scene → "He died from his wounds"
+- Excessive blood → brief: "Blood pooled everywhere" → "He was bleeding badly"
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve paragraph structure EXACTLY
+3. Keep the action and stakes, reduce graphic details
+
+Text to clean:
+"""
+
+    else:  # Level 4 (R) or 5 (Unrated) - no filtering needed
+        return """You are reviewing content. The target allows ALL violent content.
+
+NO FILTERING REQUIRED - Return the text exactly as-is.
+
+Text to return unchanged:
+"""
+
+
+# Fallback text for when cleaning fails or content is blocked
+ADULT_FALLBACK = "The moment passed, and they moved on."
+VIOLENCE_FALLBACK = "A violent confrontation ensued."
+
+
+def _get_change_blocks(chapter) -> list:
+    """Get all change block IDs and their cleaning type from a chapter."""
+    changes = []
+    current_id = None
+    cleaning_type = None
+    
+    for line in chapter.content_lines:
+        if line.startswith('#CHANGE:'):
+            current_id = line.split(':')[1].strip()
+            cleaning_type = 'generic'  # Default
+        elif line == '#NEEDS_LANGUAGE_CLEANING':
+            cleaning_type = 'language'
+        elif line == '#NEEDS_ADULT_CLEANING':
+            cleaning_type = 'adult'
+        elif line == '#NEEDS_VIOLENCE_CLEANING':
+            cleaning_type = 'violence'
+        elif line == '#END' and current_id:
+            changes.append({'id': current_id, 'type': cleaning_type})
+            current_id = None
+            cleaning_type = None
+    
+    return changes
+
+
+def _create_change_blocks_for_chapter(chapter, paragraphs: list, flagged_indices: set, 
+                                       cleaning_type: str) -> int:
+    """Create change blocks for flagged paragraphs with specific cleaning type.
+    
+    Args:
+        chapter: The chapter to modify
+        paragraphs: List of all paragraphs in the chapter
+        flagged_indices: Set of paragraph indices that need cleaning
+        cleaning_type: One of 'language', 'adult', 'violence'
+        
+    Returns:
+        Number of change blocks created
+    """
+    new_content = []
+    change_num = 1  # Change number within this chapter
+    
+    for idx, para in enumerate(paragraphs):
+        if idx in flagged_indices:
+            new_content.append('')
+            new_content.append(f'#CHANGE: {chapter.number}.{change_num}')
+            new_content.append('#STATUS: pending')
+            # Use specific cleaning type instead of generic reason
+            new_content.append(f'#NEEDS_{cleaning_type.upper()}_CLEANING')
+            new_content.append('#ORIGINAL')
+            new_content.append(para)
+            new_content.append('#CLEANED')
+            new_content.append('')  # To be filled
+            new_content.append('#END')
+            change_num += 1
+        else:
+            new_content.append('')
+            new_content.append(para)
+    
+    chapter.content_lines = new_content
+    return change_num - 1  # Return count of changes created
+
+
 # --- Main Commands ---
 
 def cmd_rate(bw: BookWashFile, client: GeminiClient, 
@@ -1591,7 +2032,8 @@ def cmd_rate(bw: BookWashFile, client: GeminiClient,
     print(f"Target levels: adult={LEVEL_TO_RATING[target_sexual]}, "
           f"violence={LEVEL_TO_RATING[target_violence]}")
     if client.language_words:
-        print(f"Language words to filter: {', '.join(client.language_words[:5])}{'...' if len(client.language_words) > 5 else ''}")
+        obfuscated = [obfuscate_word(w) for w in client.language_words[:5]]
+        print(f"Language words to filter: {', '.join(obfuscated)}{'...' if len(client.language_words) > 5 else ''}")
     print()
     
     # Update settings in file
