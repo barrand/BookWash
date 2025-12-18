@@ -29,7 +29,15 @@ print = functools.partial(print, flush=True)
 # --- HTML Text Extractor ---
 
 class HTMLTextExtractor(HTMLParser):
-    """Extract text from HTML, preserving paragraph structure."""
+    """Extract text from HTML, preserving paragraph structure and basic formatting.
+    
+    Preserves formatting using simple markers:
+    - [H1]...[/H1], [H2]...[/H2], etc. for headings
+    - [B]...[/B] for bold/strong
+    - [I]...[/I] for italic/emphasis
+    - [U]...[/U] for underline
+    - [BLOCKQUOTE]...[/BLOCKQUOTE] for block quotes
+    """
     
     def __init__(self):
         super().__init__()
@@ -40,10 +48,18 @@ class HTMLTextExtractor(HTMLParser):
         self.skip_tags = {'script', 'style', 'head'}
         self.skip_depth = 0
         self.block_tags = {'p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote'}
+        self.heading_tags = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
+        self.inline_format_tags = {
+            'b': 'B', 'strong': 'B',
+            'i': 'I', 'em': 'I', 
+            'u': 'U',
+            'blockquote': 'BLOCKQUOTE'
+        }
         self.title = None
         self.in_title = False
         self.in_h1 = False
         self.h1_text = []
+        self.current_heading = None  # Track which heading we're in
     
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
@@ -62,7 +78,23 @@ class HTMLTextExtractor(HTMLParser):
             self.in_h1 = True
             self.h1_text = []
         
-        if tag in self.block_tags and self.in_body:
+        # Add inline formatting markers
+        if tag in self.inline_format_tags and self.in_body:
+            marker = self.inline_format_tags[tag]
+            self.current_text.append(f'[{marker}]')
+        
+        # Track heading tags
+        if tag in self.heading_tags and self.in_body:
+            self.current_heading = tag.upper()
+            # Start new paragraph for heading
+            if self.current_text:
+                text = ''.join(self.current_text).strip()
+                if text:
+                    self.paragraphs.append(text)
+                self.current_text = []
+            self.current_text.append(f'[{self.current_heading}]')
+            self.in_paragraph = True
+        elif tag in self.block_tags and self.in_body:
             # Start new paragraph
             if self.current_text:
                 text = ''.join(self.current_text).strip()
@@ -86,7 +118,24 @@ class HTMLTextExtractor(HTMLParser):
             if self.h1_text:
                 self.title = ''.join(self.h1_text).strip()
         
-        if tag in self.block_tags and self.in_body:
+        # Add closing inline formatting markers
+        if tag in self.inline_format_tags and self.in_body:
+            marker = self.inline_format_tags[tag]
+            self.current_text.append(f'[/{marker}]')
+        
+        # Handle heading end tags
+        if tag in self.heading_tags and self.in_body:
+            heading_marker = tag.upper()
+            self.current_text.append(f'[/{heading_marker}]')
+            # End paragraph
+            if self.current_text:
+                text = ''.join(self.current_text).strip()
+                if text:
+                    self.paragraphs.append(text)
+                self.current_text = []
+            self.in_paragraph = False
+            self.current_heading = None
+        elif tag in self.block_tags and self.in_body:
             # End paragraph
             if self.current_text:
                 text = ''.join(self.current_text).strip()
