@@ -76,6 +76,7 @@ class _BookWashHomeState extends State<BookWashHome> {
   bool isCancelling = false;
   double progress = 0.0;
   String progressPhase = ''; // 'converting', 'rating', 'cleaning'
+  String cleaningSubPhase = ''; // 'language', 'adult', 'violence'
   int progressCurrent = 0;
   int progressTotal = 0;
   bool showDetails = false;
@@ -634,10 +635,24 @@ class _BookWashHomeState extends State<BookWashHome> {
         progressTotal = total;
 
         // Calculate progress: 5% for conversion, 45% for rating, 50% for cleaning
+        // Cleaning is split: 50-65% language, 65-80% adult, 80-100% violence
         if (progressPhase == 'rating') {
           progress = 0.05 + (current / total) * 0.45;
         } else if (progressPhase == 'cleaning') {
-          progress = 0.50 + (current / total) * 0.50;
+          // Base progress depends on which cleaning sub-phase
+          double baseProgress = 0.50;
+          double subPhaseWeight =
+              0.166; // Each sub-phase is ~16.6% of total (50% / 3)
+
+          if (cleaningSubPhase == 'language') {
+            baseProgress = 0.50;
+          } else if (cleaningSubPhase == 'adult') {
+            baseProgress = 0.666;
+          } else if (cleaningSubPhase == 'violence') {
+            baseProgress = 0.833;
+          }
+
+          progress = baseProgress + (current / total) * subPhaseWeight;
         }
       });
     }
@@ -648,6 +663,7 @@ class _BookWashHomeState extends State<BookWashHome> {
       if (countMatch != null) {
         setState(() {
           progressPhase = 'rating';
+          cleaningSubPhase = '';
           progressTotal = int.tryParse(countMatch.group(1) ?? '0') ?? 0;
           progressCurrent = 0;
         });
@@ -658,14 +674,31 @@ class _BookWashHomeState extends State<BookWashHome> {
       if (countMatch != null) {
         setState(() {
           progressPhase = 'cleaning';
+          cleaningSubPhase = 'identifying';
           progressTotal = int.tryParse(countMatch.group(1) ?? '0') ?? 0;
           progressCurrent = 0;
           progress = 0.50; // Start cleaning at 50%
         });
       }
+    } else if (line.contains('=== PASS 1: LANGUAGE CLEANING ===')) {
+      setState(() {
+        cleaningSubPhase = 'language';
+        progressCurrent = 0;
+      });
+    } else if (line.contains('=== PASS 2: ADULT CONTENT CLEANING ===')) {
+      setState(() {
+        cleaningSubPhase = 'adult';
+        progressCurrent = 0;
+      });
+    } else if (line.contains('=== PASS 3: VIOLENCE CLEANING ===')) {
+      setState(() {
+        cleaningSubPhase = 'violence';
+        progressCurrent = 0;
+      });
     } else if (line.contains('No chapters need cleaning')) {
       setState(() {
         progressPhase = 'cleaning';
+        cleaningSubPhase = '';
         progress = 1.0;
       });
     }
@@ -1275,7 +1308,53 @@ class _BookWashHomeState extends State<BookWashHome> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      LinearProgressIndicator(value: progress, minHeight: 8),
+                      // Segmented progress bar for cleaning
+                      if (progressPhase == 'cleaning') ...[
+                        // Show 3-segment progress bar for cleaning phases
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      _buildCleaningPhaseSegment(
+                                        'Language',
+                                        cleaningSubPhase == 'language',
+                                        cleaningSubPhase == 'adult' ||
+                                            cleaningSubPhase == 'violence',
+                                        Colors.purple,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      _buildCleaningPhaseSegment(
+                                        'Adult',
+                                        cleaningSubPhase == 'adult',
+                                        cleaningSubPhase == 'violence',
+                                        Colors.pink,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      _buildCleaningPhaseSegment(
+                                        'Violence',
+                                        cleaningSubPhase == 'violence',
+                                        false,
+                                        Colors.red,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  LinearProgressIndicator(
+                                    value: progress,
+                                    minHeight: 8,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        LinearProgressIndicator(value: progress, minHeight: 8),
+                      ],
                       const SizedBox(height: 8),
                       Row(
                         children: [
@@ -1298,25 +1377,21 @@ class _BookWashHomeState extends State<BookWashHome> {
                                 color: progressPhase == 'rating'
                                     ? Colors.blue.withOpacity(0.2)
                                     : progressPhase == 'cleaning'
-                                    ? Colors.orange.withOpacity(0.2)
+                                    ? _getCleaningSubPhaseColor().withOpacity(
+                                        0.2,
+                                      )
                                     : Colors.grey.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                progressPhase == 'converting'
-                                    ? '📝 Converting...'
-                                    : progressPhase == 'rating'
-                                    ? '📊 Rating${progressTotal > 0 ? ' $progressCurrent/$progressTotal chapters' : '...'}'
-                                    : progressPhase == 'cleaning'
-                                    ? '🧹 Cleaning${progressTotal > 0 ? ' $progressCurrent/$progressTotal chapters' : '...'}'
-                                    : progressPhase,
+                                _getProgressStatusText(),
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                   color: progressPhase == 'rating'
                                       ? Colors.blue
                                       : progressPhase == 'cleaning'
-                                      ? Colors.orange
+                                      ? _getCleaningSubPhaseColor()
                                       : Colors.grey,
                                 ),
                               ),
@@ -1596,94 +1671,113 @@ class _BookWashHomeState extends State<BookWashHome> {
                         // Current change display
                         _buildCurrentChangeReview(),
                         const SizedBox(height: 16),
-                        // Navigation and action buttons
+                        // Navigation and action buttons - fixed layout to prevent jumping
                         Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            ElevatedButton.icon(
-                              onPressed: currentReviewChangeIndex > 0
-                                  ? () {
-                                      setState(() {
-                                        currentReviewChangeIndex--;
-                                        selectedReviewChapter =
-                                            _allPendingChanges[currentReviewChangeIndex]
-                                                .key;
-                                      });
-                                    }
-                                  : null,
-                              icon: const Icon(Icons.arrow_back),
-                              label: const Text('Previous'),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '${currentReviewChangeIndex + 1} / ${_allPendingChanges.length}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
+                            // Left side: Navigation controls with fixed width
+                            SizedBox(
+                              width: 280,
+                              child: Row(
+                                children: [
+                                  ElevatedButton.icon(
+                                    onPressed: currentReviewChangeIndex > 0
+                                        ? () {
+                                            setState(() {
+                                              currentReviewChangeIndex--;
+                                              selectedReviewChapter =
+                                                  _allPendingChanges[currentReviewChangeIndex]
+                                                      .key;
+                                            });
+                                          }
+                                        : null,
+                                    icon: const Icon(Icons.arrow_back),
+                                    label: const Text('Previous'),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // Fixed width for counter to prevent shifting
+                                  SizedBox(
+                                    width: 70,
+                                    child: Text(
+                                      '${currentReviewChangeIndex + 1} / ${_allPendingChanges.length}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton.icon(
+                                    onPressed:
+                                        currentReviewChangeIndex <
+                                            _allPendingChanges.length - 1
+                                        ? () {
+                                            setState(() {
+                                              currentReviewChangeIndex++;
+                                              selectedReviewChapter =
+                                                  _allPendingChanges[currentReviewChangeIndex]
+                                                      .key;
+                                            });
+                                          }
+                                        : null,
+                                    icon: const Icon(Icons.arrow_forward),
+                                    label: const Text('Next'),
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed:
-                                  currentReviewChangeIndex <
-                                      _allPendingChanges.length - 1
-                                  ? () {
-                                      setState(() {
-                                        currentReviewChangeIndex++;
-                                        selectedReviewChapter =
-                                            _allPendingChanges[currentReviewChangeIndex]
-                                                .key;
-                                      });
-                                    }
-                                  : null,
-                              icon: const Icon(Icons.arrow_forward),
-                              label: const Text('Next'),
-                            ),
-                            const Spacer(),
-                            ElevatedButton.icon(
-                              onPressed: () => _rejectChange(
-                                _allPendingChanges[currentReviewChangeIndex]
-                                    .value,
-                              ),
-                              icon: const Icon(Icons.close, size: 18),
-                              label: const Text('Reject'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFD32F2F),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 12,
+                            // Right side: Action buttons - always at same position
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ElevatedButton.icon(
+                                  onPressed: () => _rejectChange(
+                                    _allPendingChanges[currentReviewChangeIndex]
+                                        .value,
+                                  ),
+                                  icon: const Icon(Icons.close, size: 18),
+                                  label: const Text('Reject'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFD32F2F),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed: () => _acceptChange(
-                                _allPendingChanges[currentReviewChangeIndex]
-                                    .value,
-                              ),
-                              icon: const Icon(Icons.check, size: 18),
-                              label: const Text('Accept'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF388E3C),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 12,
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: () => _acceptChange(
+                                    _allPendingChanges[currentReviewChangeIndex]
+                                        .value,
+                                  ),
+                                  icon: const Icon(Icons.check, size: 18),
+                                  label: const Text('Accept'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF388E3C),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed: _acceptAllChanges,
-                              icon: const Icon(Icons.done_all, size: 18),
-                              label: const Text('Accept All'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF1976D2),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 12,
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: _acceptAllChanges,
+                                  icon: const Icon(Icons.done_all, size: 18),
+                                  label: const Text('Accept All'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF1976D2),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                              ],
                             ),
                           ],
                         ),
@@ -1734,6 +1828,104 @@ class _BookWashHomeState extends State<BookWashHome> {
         ),
       ),
     );
+  }
+
+  // Helper method for cleaning phase segment in progress bar
+  Widget _buildCleaningPhaseSegment(
+    String label,
+    bool isActive,
+    bool isComplete,
+    Color color,
+  ) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        decoration: BoxDecoration(
+          color: isActive
+              ? color.withOpacity(0.3)
+              : isComplete
+              ? color.withOpacity(0.15)
+              : Colors.grey.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: isActive ? color : Colors.grey.withOpacity(0.3),
+            width: isActive ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (isComplete) ...[
+              Icon(Icons.check_circle, size: 12, color: color),
+              const SizedBox(width: 4),
+            ] else if (isActive) ...[
+              SizedBox(
+                width: 10,
+                height: 10,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                color: isActive || isComplete ? color : Colors.grey,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Helper method to get cleaning sub-phase color
+  Color _getCleaningSubPhaseColor() {
+    switch (cleaningSubPhase) {
+      case 'language':
+        return Colors.purple;
+      case 'adult':
+        return Colors.pink;
+      case 'violence':
+        return Colors.red;
+      case 'identifying':
+        return Colors.orange;
+      default:
+        return Colors.orange;
+    }
+  }
+
+  // Helper method to get progress status text
+  String _getProgressStatusText() {
+    if (progressPhase == 'converting') {
+      return '📝 Converting...';
+    } else if (progressPhase == 'rating') {
+      return '📊 Rating${progressTotal > 0 ? ' $progressCurrent/$progressTotal chapters' : '...'}';
+    } else if (progressPhase == 'cleaning') {
+      String subPhaseLabel = '';
+      switch (cleaningSubPhase) {
+        case 'identifying':
+          subPhaseLabel = '🔍 Identifying content';
+          break;
+        case 'language':
+          subPhaseLabel = '💬 Language cleaning';
+          break;
+        case 'adult':
+          subPhaseLabel = '🔞 Adult content cleaning';
+          break;
+        case 'violence':
+          subPhaseLabel = '⚔️ Violence cleaning';
+          break;
+        default:
+          subPhaseLabel = '🧹 Cleaning';
+      }
+      return '$subPhaseLabel${progressTotal > 0 ? ' ($progressCurrent/$progressTotal)' : '...'}';
+    }
+    return progressPhase;
   }
 
   Widget _buildReviewStatChip(String label, int count, Color color) {
