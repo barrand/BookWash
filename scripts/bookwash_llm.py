@@ -115,7 +115,10 @@ class Chapter:
     number: int
     title: Optional[str] = None
     rating: Optional[ChapterRating] = None
-    needs_cleaning: Optional[bool] = None
+    needs_cleaning: Optional[bool] = None  # Legacy: true if any cleaning needed
+    needs_language_cleaning: Optional[bool] = None  # True if language words need to be cleaned
+    needs_adult_cleaning: Optional[bool] = None  # True if sexual content exceeds target
+    needs_violence_cleaning: Optional[bool] = None  # True if violence exceeds target
     content_lines: list = field(default_factory=list)  # Raw lines including any existing changes
     
     def get_text_for_rating(self) -> str:
@@ -351,6 +354,15 @@ def parse_bookwash(filepath: Path) -> BookWashFile:
             elif line.startswith('#NEEDS_CLEANING:'):
                 val = line[16:].strip().lower()
                 current_chapter.needs_cleaning = val == 'true'
+            elif line.startswith('#NEEDS_LANGUAGE_CLEANING:'):
+                val = line[25:].strip().lower()
+                current_chapter.needs_language_cleaning = val == 'true'
+            elif line.startswith('#NEEDS_ADULT_CLEANING:'):
+                val = line[22:].strip().lower()
+                current_chapter.needs_adult_cleaning = val == 'true'
+            elif line.startswith('#NEEDS_VIOLENCE_CLEANING:'):
+                val = line[25:].strip().lower()
+                current_chapter.needs_violence_cleaning = val == 'true'
             else:
                 current_chapter.content_lines.append(line)
         
@@ -421,6 +433,15 @@ def write_bookwash(bw: BookWashFile, filepath: Path):
         if chapter.rating:
             lines.append(f'#RATING: language={chapter.rating.language} sexual={chapter.rating.sexual} violence={chapter.rating.violence}')
         
+        # Write specific cleaning flags (new format)
+        if chapter.needs_language_cleaning is not None:
+            lines.append(f'#NEEDS_LANGUAGE_CLEANING: {"true" if chapter.needs_language_cleaning else "false"}')
+        if chapter.needs_adult_cleaning is not None:
+            lines.append(f'#NEEDS_ADULT_CLEANING: {"true" if chapter.needs_adult_cleaning else "false"}')
+        if chapter.needs_violence_cleaning is not None:
+            lines.append(f'#NEEDS_VIOLENCE_CLEANING: {"true" if chapter.needs_violence_cleaning else "false"}')
+        
+        # Legacy flag for backward compatibility
         if chapter.needs_cleaning is not None:
             lines.append(f'#NEEDS_CLEANING: {"true" if chapter.needs_cleaning else "false"}')
         
@@ -588,6 +609,29 @@ class GeminiClient:
             time.sleep(self.min_request_interval - elapsed)
         self.last_request_time = time.time()
     
+    def _log_blocked_content(self, block_reason: str, text: str, log_type: str) -> None:
+        """Log blocked content to a file for analysis.
+        
+        Creates/appends to 'blocked_content.log' in the current directory.
+        """
+        from datetime import datetime
+        
+        log_file = Path('blocked_content.log')
+        timestamp = datetime.now().isoformat()
+        
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"\n{'='*80}\n")
+            f.write(f"TIMESTAMP: {timestamp}\n")
+            f.write(f"BLOCK_REASON: {block_reason}\n")
+            f.write(f"LOG_TYPE: {log_type}\n")
+            f.write(f"MODEL: {self.current_model}\n")
+            f.write(f"TEXT_LENGTH: {len(text)} chars\n")
+            f.write(f"CONTENT:\n")
+            f.write(f"{text}\n")
+            f.write(f"{'='*80}\n")
+        
+        print(f"      (Full blocked content logged to {log_file})")
+    
     def _log_gemini_instructions(self, prompt: str, text: str, log_type: str = 'unknown') -> None:
         """Minimal logging for Gemini requests.
         
@@ -711,6 +755,12 @@ class GeminiClient:
                         for rating in safety_ratings:
                             if rating.get('probability', '') in ['HIGH', 'MEDIUM']:
                                 print(f"      - {rating.get('category', 'UNKNOWN')}: {rating.get('probability', 'UNKNOWN')}")
+                        # Log the blocked content for debugging (first 500 chars of text)
+                        text_preview = text[:500] if len(text) > 500 else text
+                        text_preview = text_preview.replace('\n', ' ')[:300]  # Compact for display
+                        print(f"      BLOCKED TEXT: {text_preview}...")
+                        # Also log to file for later analysis
+                        self._log_blocked_content(block_reason, text, log_type)
                         return '[BLOCKED_BY_SAFETY_FILTER]'
                 
                 return ''
@@ -1374,6 +1424,123 @@ def _get_change_original(chapter, change_id: str) -> str:
     return '\n'.join(original_lines)
 
 
+def _remove_orphaned_cleaning_markers(bw: 'BookWashFile') -> int:
+    """Remove #NEEDS_*_CLEANING markers that appear outside of change blocks.
+    
+    These markers should only exist between #CHANGE: and #ORIGINAL lines.
+    If they appear elsewhere (orphaned), they should be removed.
+    
+    Returns the number of orphaned markers removed.
+    """
+    removed_count = 0
+    cleaning_markers = {
+        '#NEEDS_LANGUAGE_CLEANING',
+        '#NEEDS_ADULT_CLEANING', 
+        '#NEEDS_VIOLENCE_CLEANING'
+    }
+    
+    for chapter in bw.chapters:
+        new_content = []
+        in_change_block = False
+        past_original = False
+        
+        for line in chapter.content_lines:
+            if line.startswith('#CHANGE:'):
+                in_change_block = True
+                past_original = False
+                new_content.append(line)
+            elif line == '#ORIGINAL':
+                past_original = True
+                new_content.append(line)
+            elif line == '#END':
+                in_change_block = False
+                past_original = False
+                new_content.append(line)
+            elif line in cleaning_markers:
+                if in_change_block and not past_original:
+                    # Valid location - keep it
+                    new_content.append(line)
+                else:
+                    # Orphaned marker - remove it
+                    removed_count += 1
+            else:
+                new_content.append(line)
+        
+        chapter.content_lines = new_content
+    
+    return removed_count
+
+
+def _remove_identical_change_blocks(bw: 'BookWashFile') -> int:
+    """Remove change blocks where ORIGINAL == CLEANED (false positives).
+    
+    Returns the number of blocks removed.
+    """
+    removed_count = 0
+    
+    for chapter in bw.chapters:
+        # Parse all change blocks and identify identical ones
+        new_content = []
+        i = 0
+        lines = chapter.content_lines
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            if line.startswith('#CHANGE:'):
+                # Found a change block - parse it completely
+                change_start = i
+                change_id = line.split(':')[1].strip()
+                
+                original_lines = []
+                cleaned_lines = []
+                in_original = False
+                in_cleaned = False
+                change_end = i
+                
+                # Scan through the change block
+                j = i
+                while j < len(lines):
+                    block_line = lines[j]
+                    if block_line == '#ORIGINAL':
+                        in_original = True
+                        in_cleaned = False
+                    elif block_line == '#CLEANED':
+                        in_original = False
+                        in_cleaned = True
+                    elif block_line == '#END':
+                        change_end = j
+                        break
+                    elif in_original and not block_line.startswith('#'):
+                        original_lines.append(block_line)
+                    elif in_cleaned and not block_line.startswith('#'):
+                        cleaned_lines.append(block_line)
+                    j += 1
+                
+                # Compare original and cleaned
+                original_text = '\n'.join(original_lines).strip()
+                cleaned_text = '\n'.join(cleaned_lines).strip()
+                
+                if original_text == cleaned_text and cleaned_text:
+                    # Identical! Skip this change block, output just the original text
+                    removed_count += 1
+                    new_content.append('')  # Empty line before paragraph
+                    new_content.append(original_text)
+                    i = change_end + 1
+                else:
+                    # Keep the change block
+                    while i <= change_end:
+                        new_content.append(lines[i])
+                        i += 1
+            else:
+                new_content.append(line)
+                i += 1
+        
+        chapter.content_lines = new_content
+    
+    return removed_count
+
+
 def _set_change_cleaned(chapter, change_id: str, cleaned_text: str):
     """Set the #CLEANED content for a specific change ID."""
     new_lines = []
@@ -1411,29 +1578,25 @@ def _set_change_cleaned(chapter, change_id: str, cleaned_text: str):
 def cmd_rate(bw: BookWashFile, client: GeminiClient, 
              target_sexual: int, target_violence: int,
              verbose: bool = False) -> int:
-    """Pass A: Rate all chapters, set #RATING and #NEEDS_CLEANING flags.
+    """Pass A: Rate all chapters, set specific cleaning flags.
     
-    Note: Language filtering is now checkbox-based (specific words) instead of level-based.
+    Sets three independent flags:
+    - needs_language_cleaning: True if any of client.language_words are found in text
+    - needs_adult_cleaning: True if sexual rating exceeds target_sexual
+    - needs_violence_cleaning: True if violence rating exceeds target_violence
+    
+    Also sets legacy needs_cleaning = True if ANY of the above are True.
     """
     print(f"=== PASS A: Rating {len(bw.chapters)} chapters ===")
     print(f"Target levels: adult={LEVEL_TO_RATING[target_sexual]}, "
           f"violence={LEVEL_TO_RATING[target_violence]}")
+    if client.language_words:
+        print(f"Language words to filter: {', '.join(client.language_words[:5])}{'...' if len(client.language_words) > 5 else ''}")
     print()
     
-    # Update settings in file (language no longer has a target level)
+    # Update settings in file
     bw.settings['target_sexual'] = target_sexual
     bw.settings['target_violence'] = target_violence
-    
-    # Store the cleaning prompt for analysis (only store once)
-    # Use strategy='summarize' and aggression=2 to show more complete instructions
-    if not bw.cleaning_prompt and hasattr(client, '_cached_cleaning_prompt'):
-        # Trigger prompt generation by calling clean_paragraph with empty string
-        # This will populate _cached_cleaning_prompt with strategy instructions
-        try:
-            _, prompt = client.clean_paragraph('test', target_sexual, target_violence, 2, 'summarize')
-            bw.cleaning_prompt = prompt
-        except:
-            pass  # If it fails, we just won't have the prompt
     
     needs_cleaning_count = 0
     
@@ -1447,6 +1610,9 @@ def cmd_rate(bw: BookWashFile, client: GeminiClient,
             print("  (empty chapter, skipping)")
             chapter.rating = ChapterRating()
             chapter.needs_cleaning = False
+            chapter.needs_language_cleaning = False
+            chapter.needs_adult_cleaning = False
+            chapter.needs_violence_cleaning = False
             continue
         
         # Truncate very long chapters for rating (first ~10k chars should be representative)
@@ -1457,30 +1623,48 @@ def cmd_rate(bw: BookWashFile, client: GeminiClient,
             rating = client.rate_chapter(text)
             chapter.rating = rating
             
-            # Check if adult or violence exceeds target
-            needs_clean = rating.exceeds_target_content(target_sexual, target_violence)
+            # Set specific flags based on what exceeds target
+            chapter.needs_adult_cleaning = RATING_LEVELS.get(rating.sexual, 1) > target_sexual
+            chapter.needs_violence_cleaning = RATING_LEVELS.get(rating.violence, 1) > target_violence
             
-            # Also check if there are language words to filter
-            if not needs_clean and client.language_words:
-                # Check if any of the selected language words are in the chapter
+            # Check for language words
+            chapter.needs_language_cleaning = False
+            if client.language_words:
                 text_lower = text.lower()
                 for word in client.language_words:
                     if word.lower() in text_lower:
-                        needs_clean = True
+                        chapter.needs_language_cleaning = True
                         break
             
-            chapter.needs_cleaning = needs_clean
+            # Legacy flag: True if ANY cleaning is needed
+            chapter.needs_cleaning = (
+                chapter.needs_language_cleaning or 
+                chapter.needs_adult_cleaning or 
+                chapter.needs_violence_cleaning
+            )
             
-            if needs_clean:
+            if chapter.needs_cleaning:
                 needs_cleaning_count += 1
             
-            status = "NEEDS CLEANING" if needs_clean else "OK"
+            # Build status string showing which types need cleaning
+            status_parts = []
+            if chapter.needs_language_cleaning:
+                status_parts.append("LANG")
+            if chapter.needs_adult_cleaning:
+                status_parts.append("ADULT")
+            if chapter.needs_violence_cleaning:
+                status_parts.append("VIOLENCE")
+            status = f"NEEDS: {'+'.join(status_parts)}" if status_parts else "OK"
+            
             print(f"  Rating: L={rating.language} A={rating.sexual} V={rating.violence} -> {status}")
             
         except Exception as e:
             print(f"  Error rating chapter: {e}")
             chapter.rating = ChapterRating()
             chapter.needs_cleaning = False
+            chapter.needs_language_cleaning = False
+            chapter.needs_adult_cleaning = False
+            chapter.needs_violence_cleaning = False
     
     print()
     print(f"Rating complete: {needs_cleaning_count}/{len(bw.chapters)} chapters need cleaning")
@@ -1508,7 +1692,6 @@ def cmd_identify(bw: BookWashFile, client: GeminiClient, verbose: bool = False,
     print()
     
     total_changes = 0
-    global_change_id = 1
     
     for i, chapter in enumerate(chapters_to_process):
         title_str = f" ({chapter.title})" if chapter.title else ""
@@ -1551,12 +1734,13 @@ def cmd_identify(bw: BookWashFile, client: GeminiClient, verbose: bool = False,
         # Build new content with #CHANGE blocks
         new_content = []
         chapter_changes = 0
+        change_num = 1  # Change number within this chapter
         
         for idx, para in enumerate(paragraphs):
             if idx in flagged_indices:
                 # Create change block with empty CLEANED
                 new_content.append('')
-                new_content.append(f'#CHANGE: c{global_change_id:03d}')
+                new_content.append(f'#CHANGE: {chapter.number}.{change_num}')
                 new_content.append('#STATUS: pending')
                 reason = _infer_reason(para, target_sexual, target_violence)
                 new_content.append(f'#REASON: {reason}')
@@ -1565,7 +1749,7 @@ def cmd_identify(bw: BookWashFile, client: GeminiClient, verbose: bool = False,
                 new_content.append('#CLEANED')
                 new_content.append('')  # Empty - to be filled in Pass C
                 new_content.append('#END')
-                global_change_id += 1
+                change_num += 1
                 chapter_changes += 1
             else:
                 # Keep paragraph as-is
@@ -1632,653 +1816,391 @@ def cmd_fill(bw: BookWashFile, client: GeminiClient, verbose: bool = False,
     return total_filled
 
 
-def cmd_clean(bw: BookWashFile, client: GeminiClient, verbose: bool = False,
-               max_iterations: int = 4, verify: bool = True) -> int:
-    """Full cleaning pipeline with escalating strategies.
+def cmd_clean_passes(bw: BookWashFile, client: GeminiClient, filepath: Path,
+                      verbose: bool = False) -> int:
+    """New simplified cleaning pipeline with separate passes for each content type.
     
-    This runs:
-    1. Iteration 1: Rephrase/tone down problematic content
-    2. Iteration 2: Summarize instead of showing details
-    3. Iteration 3: Fade to black / time skip over scenes
-    4. Iteration 4: Delete content entirely
-    Each iteration re-verifies. Stops when chapter meets target rating.
+    Three passes, each saving to file after completion:
+    1. Language pass: Clean blocks with #NEEDS_LANGUAGE_CLEANING
+    2. Adult pass: Clean blocks with #NEEDS_ADULT_CLEANING  
+    3. Violence pass: Clean blocks with #NEEDS_VIOLENCE_CLEANING
+    
+    No re-rating or escalation - each pass uses focused prompts.
     """
-    # First, clean up any chapters that have change blocks but don't need cleaning
-    # (This can happen if a file was partially processed or re-rated)
-    cleaned_chapters = 0
-    for chapter in bw.chapters:
-        if not chapter.needs_cleaning:
-            # Check if there are any change blocks
-            has_changes = any(line.startswith('#CHANGE:') for line in chapter.content_lines)
-            if has_changes:
-                # Remove all change blocks and restore original content
-                new_content = []
-                in_change_block = False
-                for line in chapter.content_lines:
-                    if line.startswith('#CHANGE:'):
-                        in_change_block = True
-                    elif line == '#END' and in_change_block:
-                        in_change_block = False
-                    elif not in_change_block:
-                        new_content.append(line)
-                chapter.content_lines = new_content
-                cleaned_chapters += 1
-                if verbose:
-                    print(f"Removed change blocks from Chapter {chapter.number} (marked as not needing cleaning)")
-    
-    if cleaned_chapters > 0:
-        print(f"Cleaned up {cleaned_chapters} chapters that don't need cleaning")
-        print()
-    
-    chapters_to_clean = [ch for ch in bw.chapters if ch.needs_cleaning]
-    
-    if not chapters_to_clean:
-        print("No chapters need cleaning.")
-        return 0
-    
-    target_lang = bw.target_language
     target_sexual = bw.target_sexual
     target_violence = bw.target_violence
     
-    print(f"=== CLEANING PIPELINE: {len(chapters_to_clean)} chapters ===")
-    print(f"Target levels: language={target_lang} ({LEVEL_TO_RATING[target_lang]}), "
-          f"adult={target_sexual} ({LEVEL_TO_RATING[target_sexual]}), "
-          f"violence={target_violence} ({LEVEL_TO_RATING[target_violence]})")
-    if verify:
-        print(f"Verification enabled (max {max_iterations} iterations)")
+    # Count chapters that need cleaning for progress display
+    chapters_needing_cleaning = sum(1 for ch in bw.chapters if ch.needs_cleaning)
+    
+    print(f"=== CLEANING PIPELINE: {chapters_needing_cleaning} chapters ===")
+    print(f"Target levels: adult={LEVEL_TO_RATING[target_sexual]}, "
+          f"violence={LEVEL_TO_RATING[target_violence]}")
+    if client.language_words:
+        print(f"Language words: {', '.join(client.language_words[:5])}{'...' if len(client.language_words) > 5 else ''}")
     print()
     
     total_changes = 0
-    verified_count = 0
     
-    # Parse which content types are being filtered
-    filters_enabled = {ft.strip() for ft in client.filter_types.split(',')}
+    # First, identify paragraphs that need each type of cleaning
+    # and create change blocks with specific flags
+    print("=== IDENTIFYING CONTENT TO CLEAN ===")
     
-    for i, chapter in enumerate(chapters_to_clean):
-        title_str = f" ({chapter.title})" if chapter.title else ""
-        print(f"[{i+1}/{len(chapters_to_clean)}] Chapter {chapter.number}{title_str}")
-        
-        # Double-check: Skip if chapter was marked as not needing cleaning
-        # (This can happen if rating changed or chapter was reprocessed)
+    for i, chapter in enumerate(bw.chapters):
         if not chapter.needs_cleaning:
-            print(f"  ⏭️  Skipping - chapter marked as not needing cleaning")
+            continue
+            
+        title_str = f" ({chapter.title})" if chapter.title else ""
+        print(f"[{i+1}/{len(bw.chapters)}] Chapter {chapter.number}{title_str}")
+        
+        paragraphs = chapter.get_paragraphs_for_cleaning()
+        if not paragraphs:
             continue
         
-        iteration = 0
-        while iteration < max_iterations:
-            iteration += 1
-            
-            # Determine strategy based on iteration number
-            # For extreme rating gaps (e.g., X→PG), skip straight to aggressive strategies
-            rating_gap = 0
-            if chapter.rating:
-                if 'sexual' in filters_enabled:
-                    sexual_level = RATING_LEVELS.get(chapter.rating.sexual, 1)
-                    rating_gap = max(rating_gap, sexual_level - target_sexual)
-                if 'violence' in filters_enabled:
-                    violence_level = RATING_LEVELS.get(chapter.rating.violence, 1)
-                    rating_gap = max(rating_gap, violence_level - target_violence)
-            
-            # Skip rephrase for large gaps (3+ levels, e.g., X→PG-13 is gap of 2)
-            if iteration == 1 and rating_gap >= 2:
-                strategy = 'summarize'
-                strategy_label = 'Summarize (Large Gap)'
-            elif iteration == 1:
-                strategy = 'rephrase'
-                strategy_label = 'Rephrase/Tone Down'
-            elif iteration == 2:
-                strategy = 'fade_to_black'
-                strategy_label = 'Fade to Black'
-            elif iteration == 3:
-                strategy = 'delete'
-                strategy_label = 'Delete Content'
-            else:  # iteration == 4
-                strategy = 'delete'
-                strategy_label = 'Delete Content (Final)'
-            
-            # Aggression is always normal since strategy handles escalation
-            aggression = 1
-            
-            print(f"  Pass {iteration} [{strategy_label}]:")
-            
-            if iteration == 1:
-                # First pass: identify problematic paragraphs from ORIGINAL
-                paragraphs = chapter.get_paragraphs_for_cleaning()
-                if not paragraphs:
-                    print("    (empty chapter)")
-                    break
-                
-                # Rate chunks to find problematic paragraphs
-                flagged_indices = set()
-                chunk_size = 8
-                
-                for chunk_idx in range((len(paragraphs) + chunk_size - 1) // chunk_size):
-                    start = chunk_idx * chunk_size
-                    end = min(start + chunk_size, len(paragraphs))
-                    chunk = paragraphs[start:end]
-                    
-                    try:
-                        needs_cleaning = client.rate_chunk(chunk, target_lang, target_sexual, target_violence)
-                        for idx in needs_cleaning:
-                            flagged_indices.add(start + idx)
-                    except Exception as e:
-                        if verbose:
-                            print(f"    Error rating chunk: {e}")
-                        continue
-                
-                if not flagged_indices:
-                    print(f"    ✓ No problematic paragraphs found at chunk level")
-                    print(f"    ℹ️  Note: Chapter-level rating may still require attention")
-                    # Don't set needs_cleaning=False here - trust the chapter-level rating
-                    # The chapter may be rated X overall even if individual paragraphs seem okay
-                    verified_count += 1
-                    break
-                
-                print(f"    Found {len(flagged_indices)} paragraphs to clean")
-                
-                # First pass: create new change blocks
-                new_content = []
-                global_change_id = total_changes + 1
-                
-                for idx, para in enumerate(paragraphs):
-                    if idx in flagged_indices:
-                        new_content.append('')
-                        new_content.append(f'#CHANGE: c{global_change_id:03d}')
-                        new_content.append('#STATUS: pending')
-                        reason = _infer_reason(para, target_sexual, target_violence)
-                        new_content.append(f'#REASON: {reason}')
-                        new_content.append('#ORIGINAL')
-                        new_content.append(para)
-                        new_content.append('#CLEANED')
-                        
-                        # Clean the paragraph immediately with current strategy
-                        try:
-                            if strategy == 'delete':
-                                # Delete strategy: Just remove the content
-                                new_content.append('[Content removed to meet target rating]')
-                            else:
-                                cleaned, _ = client.clean_paragraph(para, target_sexual, target_violence, aggression, strategy)
-                                # Check if content was blocked by safety filter
-                                if cleaned == '[BLOCKED_BY_SAFETY_FILTER]':
-                                    print(f"    ⚠️  Content blocked by safety filter - removing")
-                                    new_content.append('[Content removed - blocked by safety filter]')
-                                # Detect if Gemini refused to clean (returned original unchanged)
-                                elif cleaned.strip() == para.strip():
-                                    print(f"    ⚠️  LLM refused to clean paragraph (returned unchanged)")
-                                    if strategy != 'delete':
-                                        print(f"    → Will escalate to more aggressive strategy in next iteration")
-                                    new_content.append(cleaned)
-                                elif not cleaned.strip():
-                                    # Empty response - treat as blocked
-                                    print(f"    ⚠️  LLM returned empty response - removing content")
-                                    new_content.append('[Content removed - empty response from LLM]')
-                                else:
-                                    new_content.append(cleaned)
-                        except Exception as e:
-                            print(f"    ⚠️  Error cleaning change block: {e}")
-                            if verbose:
-                                import traceback
-                                traceback.print_exc()
-                            # Mark as failed instead of leaving empty
-                            new_content.append('[Cleaning failed - see logs]')
-                        
-                        new_content.append('#END')
-                        global_change_id += 1
-                        total_changes += 1
-                    else:
-                        new_content.append('')
-                        new_content.append(para)
-                
-                chapter.content_lines = new_content
-            else:
-                # Subsequent passes: 
-                # 1. Re-clean existing change blocks more aggressively
-                # 2. ALSO check for NEW paragraphs that now exceed target
-                
-                print(f"    Re-cleaning existing change blocks...")
-                change_count = 0
-                for line in chapter.content_lines:
-                    if line.startswith('#CHANGE:'):
-                        change_id = line.split(':')[1].strip()
-                        original = _get_change_original(chapter, change_id)
-                        if original.strip():
-                            try:
-                                if strategy == 'delete':
-                                    # Iteration 4: Delete the content
-                                    cleaned = '[Content removed to meet target rating]'
-                                else:
-                                    cleaned, _ = client.clean_paragraph(original, target_sexual, target_violence, aggression, strategy)
-                                _set_change_cleaned(chapter, change_id, cleaned)
-                                change_count += 1
-                            except Exception as e:
-                                print(f"    ⚠️  Error re-cleaning {change_id}: {e}")
-                                if verbose:
-                                    import traceback
-                                    traceback.print_exc()
-                                # Mark as failed
-                                _set_change_cleaned(chapter, change_id, '[Cleaning failed - see logs]')
-                print(f"    Re-cleaned {change_count} change blocks")
-                
-                # ALSO: Check for paragraphs that weren't flagged initially but still exceed target
-                # This catches cases where paragraph 4 is PG-13 but target is PG
-                paragraphs = chapter.get_paragraphs_with_cleaned()  # Get current state with cleaned versions
-                if paragraphs:
-                    # Find which paragraphs are NOT already in change blocks
-                    existing_originals = set()
-                    in_change = False
-                    in_original = False
-                    current_original = []
-                    for line in chapter.content_lines:
-                        if line.startswith('#CHANGE:'):
-                            in_change = True
-                            current_original = []
-                        elif line == '#END' and in_change:
-                            if current_original:
-                                existing_originals.add('\n'.join(current_original).strip())
-                            in_change = False
-                            in_original = False
-                        elif line == '#ORIGINAL' and in_change:
-                            in_original = True
-                        elif line == '#CLEANED' and in_change:
-                            in_original = False
-                        elif in_original:
-                            current_original.append(line)
-                    
-                    # Rate any paragraphs not in change blocks
-                    uncleaned_paragraphs = []
-                    uncleaned_indices = []
-                    for idx, para in enumerate(paragraphs):
-                        # Check if this paragraph text matches any original in a change block
-                        if para.strip() not in existing_originals:
-                            uncleaned_paragraphs.append(para)
-                            uncleaned_indices.append(idx)
-                    
-                    if uncleaned_paragraphs:
-                        # Rate these to see if any exceed target
-                        new_flagged = []
-                        chunk_size = 8
-                        for chunk_idx in range((len(uncleaned_paragraphs) + chunk_size - 1) // chunk_size):
-                            start = chunk_idx * chunk_size
-                            end = min(start + chunk_size, len(uncleaned_paragraphs))
-                            chunk = uncleaned_paragraphs[start:end]
-                            
-                            try:
-                                needs_cleaning = client.rate_chunk(chunk, target_lang, target_sexual, target_violence)
-                                for idx in needs_cleaning:
-                                    new_flagged.append(uncleaned_indices[start + idx])
-                            except Exception as e:
-                                if verbose:
-                                    print(f"    Error rating additional chunk: {e}")
-                        
-                        if new_flagged:
-                            print(f"    Found {len(new_flagged)} additional paragraphs to clean")
-                            # Create new change blocks for these
-                            global_change_id = total_changes + 1
-                            new_content = []
-                            para_idx = 0
-                            i = 0
-                            while i < len(chapter.content_lines):
-                                line = chapter.content_lines[i]
-                                if line.startswith('#CHANGE:'):
-                                    # Copy entire change block
-                                    while i < len(chapter.content_lines):
-                                        new_content.append(chapter.content_lines[i])
-                                        if chapter.content_lines[i] == '#END':
-                                            i += 1
-                                            break
-                                        i += 1
-                                    para_idx += 1
-                                elif line.strip() and not line.startswith('#'):
-                                    # Regular paragraph
-                                    if para_idx in new_flagged:
-                                        para = line
-                                        new_content.append('')
-                                        new_content.append(f'#CHANGE: c{global_change_id:03d}')
-                                        new_content.append('#STATUS: pending')
-                                        reason = _infer_reason(para, target_sexual, target_violence)
-                                        new_content.append(f'#REASON: {reason}')
-                                        new_content.append('#ORIGINAL')
-                                        new_content.append(para)
-                                        new_content.append('#CLEANED')
-                                        try:
-                                            if strategy == 'delete':
-                                                cleaned = '[Content removed to meet target rating]'
-                                            else:
-                                                cleaned, _ = client.clean_paragraph(para, target_sexual, target_violence, aggression, strategy)
-                                            new_content.append(cleaned)
-                                        except Exception as e:
-                                            print(f"    Error cleaning new para: {e}")
-                                            new_content.append('')
-                                        new_content.append('#END')
-                                        global_change_id += 1
-                                        total_changes += 1
-                                    else:
-                                        new_content.append(line)
-                                    para_idx += 1
-                                    i += 1
-                                else:
-                                    new_content.append(line)
-                                    i += 1
-                            chapter.content_lines = new_content
-                print(f"    Re-cleaned {change_count} change blocks")
-            
-            if not verify:
-                break
-            
-            # Verify: re-rate the chapter using cleaned content
-            print(f"    Verifying...")
-            
-            # Get text with cleaned versions applied (not original)
-            text = chapter.get_text_with_cleaned()
-            if len(text) > 10000:
-                text = text[:10000]
-            
-            try:
-                rating = client.rate_chapter(text)
-                still_exceeds = rating.exceeds_target(target_lang, target_sexual, target_violence)
-                
-                print(f"    Post-clean rating: L={rating.language} A={rating.sexual} V={rating.violence}")
-                
-                if not still_exceeds:
-                    print(f"    ✓ Meets target after {iteration} pass(es)")
-                    chapter.needs_cleaning = False
-                    chapter.rating = rating
-                    verified_count += 1
-                    break
-                else:
-                    if iteration < max_iterations:
-                        print(f"    ✗ Still exceeds target, trying again...")
-                    else:
-                        print(f"    ✗ Max iterations reached")
-                        chapter.needs_cleaning = False  # Avoid infinite loops
-            except Exception as e:
-                print(f"    Error verifying: {e}")
-                break
+        # Find paragraphs needing each type of cleaning
+        lang_indices = set()
+        adult_indices = set()
+        violence_indices = set()
         
-        print()
-    
-    print(f"Cleaning complete: {total_changes} total changes made")
-    if verify:
-        print(f"Verification: {verified_count}/{len(chapters_to_clean)} chapters meet target rating")
-    
-    return total_changes
-
-
-async def worker_clean_chapter(
-    worker_id: int,
-    chapter: Chapter,
-    client: GeminiClient,
-    target_lang: int,
-    target_sexual: int,
-    target_violence: int,
-    max_iterations: int,
-    verbose: bool,
-    log_callback: Optional[Callable[[str], None]] = None
-) -> int:
-    """
-    Async worker to clean a single chapter using Pass B-C with verification.
-    Returns number of changes made.
-    """
-    def log(msg: str):
-        if log_callback:
-            log_callback(msg)
-        else:
-            print(msg)
-    
-    title_str = f" ({chapter.title})" if chapter.title else ""
-    log(f"[Worker {worker_id}] Chapter {chapter.number}{title_str}: Starting...")
-    
-    start_time = time.time()
-    total_changes = 0
-    iteration = 0
-    
-    while iteration < max_iterations:
-        iteration += 1
+        # Language: word boundary search for banned words (prevents "class" matching "ass")
+        if chapter.needs_language_cleaning and client.language_words:
+            for idx, para in enumerate(paragraphs):
+                para_lower = para.lower()
+                for word in client.language_words:
+                    # Use word boundary regex to avoid partial matches
+                    pattern = r'\b' + re.escape(word.lower()) + r'\b'
+                    if re.search(pattern, para_lower):
+                        lang_indices.add(idx)
+                        break
         
-        # Determine strategy based on iteration number (same as cmd_clean)
-        if iteration == 1:
-            strategy = 'rephrase'
-            strategy_label = 'Rephrase/Tone Down'
-        elif iteration == 2:
-            strategy = 'summarize'
-            strategy_label = 'Summarize'
-        elif iteration == 3:
-            strategy = 'fade_to_black'
-            strategy_label = 'Fade to Black'
-        else:  # iteration == 4
-            strategy = 'delete'
-            strategy_label = 'Delete Content'
-        
-        # Aggression is always normal since strategy handles escalation
-        aggression = 1
-        
-        log(f"[Worker {worker_id}] Chapter {chapter.number}: Pass {iteration} - {strategy_label}")
-        
-        if iteration == 1:
-            # First pass: identify problematic paragraphs from ORIGINAL
-            paragraphs = chapter.get_paragraphs_for_cleaning()
-            if not paragraphs:
-                log(f"[Worker {worker_id}] Chapter {chapter.number}: Empty chapter")
-                break
-            
-            # Rate chunks to find problematic paragraphs
-            flagged_indices = set()
+        # Adult/Violence: Use LLM to identify specific paragraphs
+        if chapter.needs_adult_cleaning or chapter.needs_violence_cleaning:
             chunk_size = 8
-            
             for chunk_idx in range((len(paragraphs) + chunk_size - 1) // chunk_size):
                 start = chunk_idx * chunk_size
                 end = min(start + chunk_size, len(paragraphs))
                 chunk = paragraphs[start:end]
                 
                 try:
-                    # Run synchronously in thread pool to avoid blocking
-                    await asyncio.sleep(0)  # Yield control
-                    needs_cleaning = client.rate_chunk(chunk, target_lang, target_sexual, target_violence)
-                    for idx in needs_cleaning:
-                        flagged_indices.add(start + idx)
-                except Exception as e:
-                    if verbose:
-                        log(f"[Worker {worker_id}] Chapter {chapter.number}: Error rating chunk: {e}")
-                    continue
-            
-            if flagged_indices:
-                log(f"[Worker {worker_id}] Chapter {chapter.number}: Found {len(flagged_indices)} problematic paragraphs")
-                
-                # Create change blocks for flagged paragraphs
-                new_content = []
-                global_change_id = 1
-                
-                for idx, para in enumerate(paragraphs):
-                    if idx in flagged_indices:
-                        # Create change block with empty CLEANED
-                        change_id = f"c{chapter.number}_{global_change_id:03d}"
-                        new_content.append('')
-                        new_content.append(f'#CHANGE: {change_id}')
-                        new_content.append('#STATUS: pending')
-                        reason = _infer_reason(para, target_sexual, target_violence)
-                        new_content.append(f'#REASON: {reason}')
-
-                        new_content.append('#ORIGINAL')
-                        new_content.append(para)
-                        new_content.append('#CLEANED')
-                        new_content.append('')  # Empty - to be filled
-                        new_content.append('#END')
-                        global_change_id += 1
-                        total_changes += 1
-                    else:
-                        # Keep paragraph as-is
-                        new_content.append('')
-                        new_content.append(para)
-                
-                chapter.content_lines = new_content
-            else:
-                log(f"[Worker {worker_id}] Chapter {chapter.number}: No problematic content found")
-                break
-        
-        # Fill in cleaned versions for all unfilled changes
-        unfilled = _get_unfilled_changes(chapter)
-        if unfilled:
-            log(f"[Worker {worker_id}] Chapter {chapter.number}: Cleaning {len(unfilled)} changes...")
-            filled_count = 0
-            
-            for change_id in unfilled:
-                original = _get_change_original(chapter, change_id)
-                if not original.strip():
-                    continue
-                
-                try:
-                    await asyncio.sleep(0)  # Yield control
-                    # Use strategy-based cleaning (same as cmd_clean)
-                    if strategy == 'delete':
-                        cleaned = '[Content removed to meet target rating]'
-                    else:
-                        cleaned, _ = client.clean_paragraph(original, target_sexual, target_violence, aggression, strategy=strategy)
-                    _set_change_cleaned(chapter, change_id, cleaned)
-                    filled_count += 1
+                    # Rate chunk - this returns paragraph indices that exceed ANY target
+                    # We'll use the chapter's rating to determine which type
+                    needs_clean_indices = client.rate_chunk(
+                        chunk, 
+                        bw.target_language if hasattr(bw, 'target_language') else 2,
+                        target_sexual, 
+                        target_violence
+                    )
                     
-                    if filled_count % 5 == 0:
-                        log(f"[Worker {worker_id}] Chapter {chapter.number}: Cleaned [{filled_count}/{len(unfilled)}]")
+                    for idx in needs_clean_indices:
+                        abs_idx = start + idx
+                        # Determine if it's adult or violence based on chapter rating
+                        if chapter.needs_adult_cleaning:
+                            adult_indices.add(abs_idx)
+                        if chapter.needs_violence_cleaning:
+                            violence_indices.add(abs_idx)
+                            
                 except Exception as e:
-                    log(f"[Worker {worker_id}] ⚠️  Chapter {chapter.number}: Error cleaning {change_id}: {e}")
                     if verbose:
-                        import traceback
-                        traceback.print_exc()
-                    # Mark as failed instead of leaving empty
-                    _set_change_cleaned(chapter, change_id, '[Cleaning failed - see logs]')
-                    filled_count += 1
-            
-            log(f"[Worker {worker_id}] Chapter {chapter.number}: Filled {filled_count} changes")
+                        print(f"  Error rating chunk: {e}")
         
-        # Verify: re-rate with CLEANED substituted
-        try:
-            await asyncio.sleep(0)  # Yield control
-            text = chapter.get_text_with_cleaned()
-            if len(text) > 10000:
-                text = text[:10000] + "\n\n[truncated for rating]"
-            
-            rating = client.rate_chapter(text)
-            chapter.rating = rating
-            
-            still_exceeds = rating.exceeds_target(target_lang, target_sexual, target_violence)
-            
-            if still_exceeds:
-                log(f"[Worker {worker_id}] Chapter {chapter.number}: Still exceeds (L={rating.language} A={rating.sexual} V={rating.violence})")
+        # Create change blocks for each identified paragraph
+        all_flagged = lang_indices | adult_indices | violence_indices
+        if not all_flagged:
+            print(f"  No paragraphs flagged for cleaning")
+            chapter.needs_cleaning = False
+            continue
+        
+        # Build new content with change blocks
+        new_content = []
+        change_num = 1  # Change number within this chapter
+        
+        for idx, para in enumerate(paragraphs):
+            if idx in all_flagged:
+                new_content.append('')
+                new_content.append(f'#CHANGE: {chapter.number}.{change_num}')
+                new_content.append('#STATUS: pending')
+                
+                # Set specific cleaning type flag(s)
+                if idx in lang_indices:
+                    new_content.append('#NEEDS_LANGUAGE_CLEANING')
+                if idx in adult_indices:
+                    new_content.append('#NEEDS_ADULT_CLEANING')
+                if idx in violence_indices:
+                    new_content.append('#NEEDS_VIOLENCE_CLEANING')
+                
+                new_content.append('#ORIGINAL')
+                new_content.append(para)
+                new_content.append('#CLEANED')
+                new_content.append('')  # Empty - to be filled
+                new_content.append('#END')
+                change_num += 1
+                total_changes += 1
             else:
-                log(f"[Worker {worker_id}] Chapter {chapter.number}: ✓ Target met (L={rating.language} A={rating.sexual} V={rating.violence})")
-                break
-        except Exception as e:
-            log(f"[Worker {worker_id}] Chapter {chapter.number}: Error verifying: {e}")
-            break
-    
-    elapsed = time.time() - start_time
-    log(f"[Worker {worker_id}] ✅ Chapter {chapter.number} complete ({int(elapsed)}s, {total_changes} changes)")
-    
-    return total_changes
-
-
-async def cmd_clean_parallel(
-    bw: BookWashFile,
-    api_key: str,
-    model: str,
-    num_workers: int,
-    target_lang: int,
-    target_sexual: int,
-    target_violence: int,
-    max_iterations: int,
-    verbose: bool,
-    session_dir: Optional[Path] = None,
-    log_callback: Optional[Callable[[str], None]] = None,
-    language_words: list = None
-) -> int:
-    """
-    Parallel cleaning pipeline using async workers with a shared queue.
-    Writes per-chapter files during processing for crash resilience.
-    """
-    def log(msg: str):
-        if log_callback:
-            log_callback(msg)
-        else:
-            print(msg)
-    
-    chapters_to_clean = [ch for ch in bw.chapters if ch.needs_cleaning]
-    
-    if not chapters_to_clean:
-        log("No chapters need cleaning.")
-        return 0
-    
-    log(f"=== PASS B-C: Cleaning {len(chapters_to_clean)} chapters ({num_workers} workers) ===")
-    log(f"Target levels: language={target_lang} ({LEVEL_TO_RATING[target_lang]}), "
-        f"adult={target_sexual} ({LEVEL_TO_RATING[target_sexual]}), "
-        f"violence={target_violence} ({LEVEL_TO_RATING[target_violence]})")
-    log(f"Max iterations per chapter: {max_iterations}")
-    log("")
-    
-    # Create queue and add chapters
-    queue = asyncio.Queue()
-    for chapter in chapters_to_clean:
-        await queue.put(chapter)
-    
-    # Create clients (one per worker to avoid threading issues)
-    clients = [GeminiClient(api_key, model, language_words=language_words or []) for _ in range(num_workers)]
-    
-    total_changes = 0
-    completed = []
-    
-    async def worker(worker_id: int):
-        nonlocal total_changes
-        client = clients[worker_id]
+                new_content.append('')
+                new_content.append(para)
         
-        while True:
-            try:
-                chapter = await asyncio.wait_for(queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                # Queue is empty
-                break
+        chapter.content_lines = new_content
+        
+        stats = []
+        if lang_indices:
+            stats.append(f"{len(lang_indices)} lang")
+        if adult_indices:
+            stats.append(f"{len(adult_indices)} adult")
+        if violence_indices:
+            stats.append(f"{len(violence_indices)} violence")
+        print(f"  Created {change_num - 1} change blocks ({', '.join(stats)})")
+    
+    # Save after identification
+    write_bookwash(bw, filepath)
+    print(f"\n✓ Saved after identification ({total_changes} change blocks)")
+    print()
+    
+    # === PASS 1: LANGUAGE CLEANING ===
+    print("=== PASS 1: LANGUAGE CLEANING ===")
+    lang_prompt = build_language_cleaning_prompt(client.language_words)
+    lang_cleaned = 0
+    
+    if client.language_words and lang_prompt:
+        # Save language prompt to file
+        bw.cleaning_prompt = f"=== LANGUAGE CLEANING PROMPT ===\n{lang_prompt}"
+        
+        for chapter in bw.chapters:
+            # Find change blocks with #NEEDS_LANGUAGE_CLEANING
+            for line_idx, line in enumerate(chapter.content_lines):
+                if line.startswith('#CHANGE:'):
+                    change_id = line.split(':')[1].strip()
+                    
+                    # Check if this block needs language cleaning
+                    needs_lang = False
+                    for check_idx in range(line_idx, min(line_idx + 10, len(chapter.content_lines))):
+                        if chapter.content_lines[check_idx] == '#NEEDS_LANGUAGE_CLEANING':
+                            needs_lang = True
+                            break
+                        if chapter.content_lines[check_idx] == '#ORIGINAL':
+                            break
+                    
+                    if needs_lang:
+                        original = _get_change_original(chapter, change_id)
+                        if original.strip():
+                            try:
+                                # Use focused language prompt
+                                cleaned = client._make_request(lang_prompt, original, log_type='cleaning')
+                                if cleaned and cleaned.strip() and cleaned != '[BLOCKED_BY_SAFETY_FILTER]':
+                                    _set_change_cleaned(chapter, change_id, cleaned.strip())
+                                    lang_cleaned += 1
+                                else:
+                                    # For language, we can try harder - just remove bad words manually
+                                    print(f"  ⚠️  Language cleaning failed for {change_id}, keeping original")
+                            except Exception as e:
+                                print(f"  Error cleaning {change_id}: {e}")
+        
+        print(f"  Cleaned {lang_cleaned} language blocks")
+        write_bookwash(bw, filepath)
+        print(f"  ✓ Saved after language pass")
+    else:
+        print("  (No language words to filter)")
+    print()
+    
+    # === PASS 2: ADULT CONTENT CLEANING ===
+    print("=== PASS 2: ADULT CONTENT CLEANING ===")
+    adult_prompt = build_adult_cleaning_prompt(target_sexual)
+    adult_cleaned = 0
+    adult_fallback_used = 0
+    
+    # Append adult prompt to saved prompts
+    if bw.cleaning_prompt:
+        bw.cleaning_prompt += f"\n\n=== ADULT CLEANING PROMPT ===\n{adult_prompt}"
+    else:
+        bw.cleaning_prompt = f"=== ADULT CLEANING PROMPT ===\n{adult_prompt}"
+    
+    for chapter in bw.chapters:
+        for line_idx, line in enumerate(chapter.content_lines):
+            if line.startswith('#CHANGE:'):
+                change_id = line.split(':')[1].strip()
+                
+                # Check if this block needs adult cleaning
+                needs_adult = False
+                for check_idx in range(line_idx, min(line_idx + 10, len(chapter.content_lines))):
+                    if chapter.content_lines[check_idx] == '#NEEDS_ADULT_CLEANING':
+                        needs_adult = True
+                        break
+                    if chapter.content_lines[check_idx] == '#ORIGINAL':
+                        break
+                
+                if needs_adult:
+                    # Get current cleaned (may have language cleaning already)
+                    current_cleaned = _get_change_cleaned(chapter, change_id)
+                    text_to_clean = current_cleaned if current_cleaned.strip() else _get_change_original(chapter, change_id)
+                    
+                    if text_to_clean.strip():
+                        try:
+                            cleaned = client._make_request(adult_prompt, text_to_clean, log_type='cleaning')
+                            
+                            if not cleaned or not cleaned.strip() or cleaned == '[BLOCKED_BY_SAFETY_FILTER]':
+                                # Use fallback
+                                print(f"  ⚠️  Adult cleaning blocked for {change_id}, using fallback")
+                                _set_change_cleaned(chapter, change_id, ADULT_FALLBACK)
+                                adult_fallback_used += 1
+                            else:
+                                _set_change_cleaned(chapter, change_id, cleaned.strip())
+                            adult_cleaned += 1
+                        except Exception as e:
+                            print(f"  Error cleaning {change_id}: {e}")
+                            _set_change_cleaned(chapter, change_id, ADULT_FALLBACK)
+                            adult_fallback_used += 1
+    
+    print(f"  Cleaned {adult_cleaned} adult blocks ({adult_fallback_used} used fallback)")
+    write_bookwash(bw, filepath)
+    print(f"  ✓ Saved after adult pass")
+    print()
+    
+    # === PASS 3: VIOLENCE CLEANING ===
+    print("=== PASS 3: VIOLENCE CLEANING ===")
+    violence_prompt = build_violence_cleaning_prompt(target_violence)
+    violence_cleaned = 0
+    violence_fallback_used = 0
+    
+    # Append violence prompt to saved prompts
+    bw.cleaning_prompt += f"\n\n=== VIOLENCE CLEANING PROMPT ===\n{violence_prompt}"
+    
+    for chapter in bw.chapters:
+        for line_idx, line in enumerate(chapter.content_lines):
+            if line.startswith('#CHANGE:'):
+                change_id = line.split(':')[1].strip()
+                
+                # Check if this block needs violence cleaning
+                needs_violence = False
+                for check_idx in range(line_idx, min(line_idx + 10, len(chapter.content_lines))):
+                    if chapter.content_lines[check_idx] == '#NEEDS_VIOLENCE_CLEANING':
+                        needs_violence = True
+                        break
+                    if chapter.content_lines[check_idx] == '#ORIGINAL':
+                        break
+                
+                if needs_violence:
+                    # Get current cleaned (may have previous cleaning)
+                    current_cleaned = _get_change_cleaned(chapter, change_id)
+                    text_to_clean = current_cleaned if current_cleaned.strip() else _get_change_original(chapter, change_id)
+                    
+                    if text_to_clean.strip():
+                        try:
+                            cleaned = client._make_request(violence_prompt, text_to_clean, log_type='cleaning')
+                            
+                            if not cleaned or not cleaned.strip() or cleaned == '[BLOCKED_BY_SAFETY_FILTER]':
+                                # Use fallback
+                                print(f"  ⚠️  Violence cleaning blocked for {change_id}, using fallback")
+                                _set_change_cleaned(chapter, change_id, VIOLENCE_FALLBACK)
+                                violence_fallback_used += 1
+                            else:
+                                _set_change_cleaned(chapter, change_id, cleaned.strip())
+                            violence_cleaned += 1
+                        except Exception as e:
+                            print(f"  Error cleaning {change_id}: {e}")
+                            _set_change_cleaned(chapter, change_id, VIOLENCE_FALLBACK)
+                            violence_fallback_used += 1
+    
+    print(f"  Cleaned {violence_cleaned} violence blocks ({violence_fallback_used} used fallback)")
+    
+    # Remove change blocks where ORIGINAL == CLEANED (false positives)
+    removed = _remove_identical_change_blocks(bw)
+    if removed > 0:
+        print(f"  🧹 Removed {removed} identical change blocks (false positives)")
+    
+    # Remove any orphaned cleaning markers that ended up outside change blocks
+    orphaned = _remove_orphaned_cleaning_markers(bw)
+    if orphaned > 0:
+        print(f"  🧹 Removed {orphaned} orphaned cleaning markers")
+    
+    write_bookwash(bw, filepath)
+    print(f"  ✓ Saved after violence pass")
+    print()
+    
+    # === RE-RATING PASS: Verify cleaning worked ===
+    print("=== RE-RATING CLEANED CONTENT ===")
+    
+    # Re-rate chapters using the CLEANED content
+    still_exceeds = []
+    for i, chapter in enumerate(bw.chapters):
+        # Get chapter text with cleaned content substituted
+        cleaned_text = chapter.get_text_with_cleaned()
+        if len(cleaned_text) > 12000:
+            cleaned_text = cleaned_text[:12000] + "\n\n[truncated for rating]"
+        
+        if not cleaned_text.strip():
+            continue
+        
+        try:
+            rating = client.rate_chapter(cleaned_text)
+            old_rating_str = f"{chapter.rating.language}/{chapter.rating.sexual}/{chapter.rating.violence}" if chapter.rating else "none"
+            chapter.rating = rating  # Update to post-clean rating
             
-            try:
-                changes = await worker_clean_chapter(
-                    worker_id + 1,
-                    chapter,
-                    client,
-                    target_lang,
-                    target_sexual,
-                    target_violence,
-                    max_iterations,
-                    verbose,
-                    log_callback
-                )
-                total_changes += changes
-                completed.append(chapter.number)
-                
-                # Write per-chapter file if session_dir provided
-                if session_dir:
-                    chapter_file = session_dir / f"ch_{chapter.number:03d}.bookwash"
-                    write_chapter_bookwash(chapter, chapter_file, bw.settings)
-                
-                # Log progress
-                log(f"Progress: {len(completed)}/{len(chapters_to_clean)} chapters complete")
-                
-            except Exception as e:
-                log(f"[Worker {worker_id + 1}] ❌ Chapter {chapter.number} failed: {e}")
-            finally:
-                queue.task_done()
+            # Check if still exceeds targets
+            exceeds_adult = RATING_LEVELS.get(rating.sexual, 1) > target_sexual
+            exceeds_violence = RATING_LEVELS.get(rating.violence, 1) > target_violence
+            
+            if exceeds_adult or exceeds_violence:
+                still_exceeds.append((chapter.number, rating))
+                chapter.needs_cleaning = True
+                chapter.needs_adult_cleaning = exceeds_adult
+                chapter.needs_violence_cleaning = exceeds_violence
+                print(f"  Chapter {chapter.number}: {old_rating_str} → L={rating.language} A={rating.sexual} V={rating.violence} ⚠️  STILL EXCEEDS")
+            else:
+                chapter.needs_cleaning = False
+                chapter.needs_adult_cleaning = False
+                chapter.needs_violence_cleaning = False
+                print(f"  Chapter {chapter.number}: {old_rating_str} → L={rating.language} A={rating.sexual} V={rating.violence} ✓")
+        except Exception as e:
+            print(f"  Chapter {chapter.number}: Error re-rating: {e}")
     
-    # Start workers
-    workers = [asyncio.create_task(worker(i)) for i in range(num_workers)]
+    # Reset language cleaning (word-based, always complete after one pass)
+    for chapter in bw.chapters:
+        chapter.needs_language_cleaning = False
     
-    # Wait for all work to complete
-    await queue.join()
+    write_bookwash(bw, filepath)
     
-    # Cancel workers
-    for w in workers:
-        w.cancel()
+    if still_exceeds:
+        print(f"\n⚠️  {len(still_exceeds)} chapters still exceed targets after cleaning.")
+        print("  These may need manual review or more aggressive prompts.")
+        for ch_num, rating in still_exceeds:
+            print(f"    - Chapter {ch_num}: A={rating.sexual} V={rating.violence}")
+    else:
+        print(f"\n✓ All chapters now meet target ratings!")
     
-    await asyncio.gather(*workers, return_exceptions=True)
-    
-    log("")
-    log(f"Cleaning complete: {total_changes} total changes made across {len(completed)} chapters")
+    print()
+    print(f"=== CLEANING COMPLETE ===")
+    print(f"Total: {total_changes} change blocks")
+    print(f"  Language: {lang_cleaned}")
+    print(f"  Adult: {adult_cleaned} ({adult_fallback_used} fallback)")
+    print(f"  Violence: {violence_cleaned} ({violence_fallback_used} fallback)")
     
     return total_changes
+
+
+def _get_change_cleaned(chapter, change_id: str) -> str:
+    """Get the #CLEANED content for a specific change ID."""
+    in_target_change = False
+    in_cleaned = False
+    cleaned_lines = []
+    
+    for line in chapter.content_lines:
+        if line.startswith('#CHANGE:'):
+            cid = line.split(':')[1].strip()
+            in_target_change = (cid == change_id)
+            in_cleaned = False
+        elif line == '#CLEANED' and in_target_change:
+            in_cleaned = True
+            cleaned_lines = []
+        elif line == '#END':
+            if in_target_change:
+                break
+            in_target_change = False
+        elif in_cleaned and not line.startswith('#'):
+            cleaned_lines.append(line)
+    
+    return '\n'.join(cleaned_lines)
+
+
+# Old escalation-based cleaning functions removed - now using cmd_clean_passes
 
 
 # --- CLI ---
@@ -2313,7 +2235,8 @@ Examples:
     parser.add_argument('--rate', action='store_true', help='Pass A: Rate all chapters')
     parser.add_argument('--identify', action='store_true', help='Pass B: Identify problematic paragraphs, create #CHANGE blocks')
     parser.add_argument('--fill', action='store_true', help='Pass C: Fill in #CLEANED sections for change blocks')
-    parser.add_argument('--clean', action='store_true', help='Full cleaning pipeline (identify + fill + verify loop)')
+    parser.add_argument('--clean-passes', action='store_true', 
+                       help='Simplified cleaning with separate passes (language, adult, violence)')
     parser.add_argument('--api-key', help='Gemini API key (or set GEMINI_API_KEY)')
     parser.add_argument('--model', default=DEFAULT_MODEL, help=f'Gemini model (default: {DEFAULT_MODEL})')
     parser.add_argument('--language', type=int, default=None, choices=[1,2,3,4,5],
@@ -2328,18 +2251,10 @@ Examples:
                        help='Comma-separated list of content types to filter (e.g., "language" for language-only)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     parser.add_argument('--dry-run', action='store_true', help='Parse and validate without API calls')
-    parser.add_argument('--no-verify', action='store_true', 
-                       help='Skip verification (do not re-rate after cleaning)')
-    parser.add_argument('--max-iterations', type=int, default=3,
-                       help='Max cleaning iterations per chapter (default: 3)')
     parser.add_argument('--chunk-size', type=int, default=3,
                        help='Paragraphs per chunk for identification (default: 3)')
     parser.add_argument('--aggression', type=int, default=1, choices=[1,2,3],
                        help='Cleaning aggression level: 1=normal, 2=aggressive, 3=very aggressive')
-    parser.add_argument('--workers', type=int, default=1,
-                       help='Number of parallel workers for cleaning (default: 1)')
-    parser.add_argument('--output-dir', type=str,
-                       help='Directory to write per-chapter files during parallel processing')
     
     args = parser.parse_args()
     
@@ -2349,8 +2264,8 @@ Examples:
         print(f"Error: File not found: {input_path}")
         return 1
     
-    if not args.rate and not args.identify and not args.fill and not args.clean:
-        print("Error: Must specify at least one of --rate, --identify, --fill, or --clean")
+    if not args.rate and not args.identify and not args.fill and not args.clean_passes:
+        print("Error: Must specify at least one of --rate, --identify, --fill, or --clean-passes")
         return 1
     
     # Get API key
@@ -2425,37 +2340,8 @@ Examples:
         cmd_fill(bw, client, args.verbose, aggression=args.aggression)
         print()
     
-    if args.clean:
-        num_workers = args.workers
-        
-        if num_workers > 1:
-            # Parallel processing
-            session_dir = None
-            if args.output_dir:
-                session_dir = Path(args.output_dir)
-                session_dir.mkdir(parents=True, exist_ok=True)
-            
-            asyncio.run(cmd_clean_parallel(
-                bw, api_key, args.model,
-                num_workers=num_workers,
-                target_lang=target_lang,
-                target_sexual=args.sexual,
-                target_violence=args.violence,
-                max_iterations=args.max_iterations,
-                verbose=args.verbose,
-                session_dir=session_dir,
-                language_words=language_words
-            ))
-            
-            # Merge chapter files if they were written
-            if session_dir and list(session_dir.glob('ch_*.bookwash')):
-                print("Merging per-chapter files...")
-                merge_chapter_files(session_dir, input_path, bw.settings)
-        else:
-            # Serial processing (original)
-            cmd_clean(bw, client, args.verbose, 
-                      max_iterations=args.max_iterations,
-                      verify=not args.no_verify)
+    if args.clean_passes:
+        cmd_clean_passes(bw, client, input_path, verbose=args.verbose)
         print()
     
     # Write updated file
