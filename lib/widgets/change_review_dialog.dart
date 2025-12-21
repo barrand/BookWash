@@ -69,32 +69,119 @@ class _ChangeReviewDialogState extends State<ChangeReviewDialog> {
     Navigator.of(context).pop();
   }
 
-  // Helper method to build highlighted text showing differences
+  // Parse text with formatting tags and build styled TextSpans
+  List<TextSpan> _parseFormattedText(
+    String text, {
+    Color? backgroundColor,
+    Color? textColor,
+  }) {
+    final List<TextSpan> spans = [];
+    final baseStyle = TextStyle(
+      fontSize: 13,
+      color: textColor ?? Colors.white,
+      backgroundColor: backgroundColor,
+    );
+
+    // Regex to match formatting tags: [b], [/b], [i], [/i], [h1], [/h1], [h2], [/h2]
+    final tagPattern = RegExp(r'\[(/?)(b|i|h1|h2)\]', caseSensitive: false);
+
+    int lastEnd = 0;
+    bool inBold = false;
+    bool inItalic = false;
+    bool inH1 = false;
+    bool inH2 = false;
+
+    for (final match in tagPattern.allMatches(text)) {
+      // Add text before this tag
+      if (match.start > lastEnd) {
+        final chunk = text.substring(lastEnd, match.start);
+        spans.add(
+          TextSpan(
+            text: chunk,
+            style: baseStyle.copyWith(
+              fontWeight: (inBold || inH1 || inH2) ? FontWeight.bold : null,
+              fontStyle: inItalic ? FontStyle.italic : null,
+              fontSize: inH1 ? 18.0 : (inH2 ? 15.0 : 13.0),
+            ),
+          ),
+        );
+      }
+
+      // Process the tag
+      final isClosing = match.group(1) == '/';
+      final tagName = match.group(2)!.toLowerCase();
+
+      switch (tagName) {
+        case 'b':
+          inBold = !isClosing;
+          break;
+        case 'i':
+          inItalic = !isClosing;
+          break;
+        case 'h1':
+          inH1 = !isClosing;
+          break;
+        case 'h2':
+          inH2 = !isClosing;
+          break;
+      }
+
+      lastEnd = match.end;
+    }
+
+    // Add remaining text after last tag
+    if (lastEnd < text.length) {
+      final chunk = text.substring(lastEnd);
+      spans.add(
+        TextSpan(
+          text: chunk,
+          style: baseStyle.copyWith(
+            fontWeight: (inBold || inH1 || inH2) ? FontWeight.bold : null,
+            fontStyle: inItalic ? FontStyle.italic : null,
+            fontSize: inH1 ? 18.0 : (inH2 ? 15.0 : 13.0),
+          ),
+        ),
+      );
+    }
+
+    // If no spans were added (no tags in text), add the whole text
+    if (spans.isEmpty) {
+      spans.add(TextSpan(text: text, style: baseStyle));
+    }
+
+    return spans;
+  }
+
+  // Helper method to build highlighted text showing differences with formatting
   Widget _buildHighlightedText(String text, bool isOriginal) {
     final otherText = isOriginal
         ? currentChange.proposedText
         : currentChange.originalText;
 
-    // If texts are identical, no highlighting needed
+    // If texts are identical, just render with formatting
     if (text == otherText) {
-      return SelectableText(
-        text,
-        style: const TextStyle(fontSize: 13, color: Colors.white),
-      );
+      return SelectableText.rich(TextSpan(children: _parseFormattedText(text)));
     }
 
     // Split into sentences for better comparison
     final sentences = _splitIntoSentences(text);
     final otherSentences = _splitIntoSentences(otherText);
 
-    final List<TextSpan> spans = [];
+    final List<TextSpan> allSpans = [];
 
     for (final sentence in sentences) {
       final trimmed = sentence.trim();
       if (trimmed.isEmpty) continue;
 
       // Check if this sentence exists in the other text
-      final existsInOther = otherSentences.any((s) => s.trim() == trimmed);
+      // Strip formatting tags for comparison
+      final strippedSentence = sentence
+          .replaceAll(RegExp(r'\[/?[bBiIhH12]+\]'), '')
+          .trim();
+      final existsInOther = otherSentences.any((s) {
+        final stripped = s.replaceAll(RegExp(r'\[/?[bBiIhH12]+\]'), '').trim();
+        return stripped == strippedSentence;
+      });
 
       Color? backgroundColor;
       Color? textColor;
@@ -109,19 +196,17 @@ class _ChangeReviewDialogState extends State<ChangeReviewDialog> {
         textColor = Colors.white;
       }
 
-      spans.add(
-        TextSpan(
-          text: sentence,
-          style: TextStyle(
-            backgroundColor: backgroundColor,
-            color: textColor ?? Colors.white,
-            fontSize: 13,
-          ),
+      // Parse this sentence with formatting and add spans
+      allSpans.addAll(
+        _parseFormattedText(
+          sentence,
+          backgroundColor: backgroundColor,
+          textColor: textColor,
         ),
       );
     }
 
-    return SelectableText.rich(TextSpan(children: spans));
+    return SelectableText.rich(TextSpan(children: allSpans));
   }
 
   List<String> _splitIntoSentences(String text) {

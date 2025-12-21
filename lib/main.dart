@@ -640,16 +640,20 @@ class _BookWashHomeState extends State<BookWashHome> {
           progress = 0.05 + (current / total) * 0.45;
         } else if (progressPhase == 'cleaning') {
           // Base progress depends on which cleaning sub-phase
+          // 4 sub-phases: language, adult, violence, verifying
+          // They share the 50% cleaning portion (50% to 100%)
           double baseProgress = 0.50;
           double subPhaseWeight =
-              0.166; // Each sub-phase is ~16.6% of total (50% / 3)
+              0.125; // Each sub-phase is 12.5% of total (50% / 4)
 
           if (cleaningSubPhase == 'language') {
             baseProgress = 0.50;
           } else if (cleaningSubPhase == 'adult') {
-            baseProgress = 0.666;
+            baseProgress = 0.625;
           } else if (cleaningSubPhase == 'violence') {
-            baseProgress = 0.833;
+            baseProgress = 0.75;
+          } else if (cleaningSubPhase == 'verifying') {
+            baseProgress = 0.875;
           }
 
           progress = baseProgress + (current / total) * subPhaseWeight;
@@ -694,6 +698,16 @@ class _BookWashHomeState extends State<BookWashHome> {
       setState(() {
         cleaningSubPhase = 'violence';
         progressCurrent = 0;
+      });
+    } else if (line.contains('=== VERIFYING CLEANED CONTENT')) {
+      // Parse count from "=== VERIFYING CLEANED CONTENT (X chapters, Y workers) ==="
+      final countMatch = RegExp(r'\((\d+) chapters').firstMatch(line);
+      setState(() {
+        cleaningSubPhase = 'verifying';
+        progressCurrent = 0;
+        if (countMatch != null) {
+          progressTotal = int.tryParse(countMatch.group(1) ?? '0') ?? 0;
+        }
       });
     } else if (line.contains('No chapters need cleaning')) {
       setState(() {
@@ -1310,7 +1324,7 @@ class _BookWashHomeState extends State<BookWashHome> {
                       const SizedBox(height: 12),
                       // Segmented progress bar for cleaning
                       if (progressPhase == 'cleaning') ...[
-                        // Show 3-segment progress bar for cleaning phases
+                        // Show 4-segment progress bar for cleaning phases
                         Row(
                           children: [
                             Expanded(
@@ -1323,22 +1337,31 @@ class _BookWashHomeState extends State<BookWashHome> {
                                         'Language',
                                         cleaningSubPhase == 'language',
                                         cleaningSubPhase == 'adult' ||
-                                            cleaningSubPhase == 'violence',
+                                            cleaningSubPhase == 'violence' ||
+                                            cleaningSubPhase == 'verifying',
                                         Colors.purple,
                                       ),
                                       const SizedBox(width: 4),
                                       _buildCleaningPhaseSegment(
                                         'Adult',
                                         cleaningSubPhase == 'adult',
-                                        cleaningSubPhase == 'violence',
+                                        cleaningSubPhase == 'violence' ||
+                                            cleaningSubPhase == 'verifying',
                                         Colors.pink,
                                       ),
                                       const SizedBox(width: 4),
                                       _buildCleaningPhaseSegment(
                                         'Violence',
                                         cleaningSubPhase == 'violence',
-                                        false,
+                                        cleaningSubPhase == 'verifying',
                                         Colors.red,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      _buildCleaningPhaseSegment(
+                                        'Verify',
+                                        cleaningSubPhase == 'verifying',
+                                        false,
+                                        Colors.teal,
                                       ),
                                     ],
                                   ),
@@ -1677,7 +1700,7 @@ class _BookWashHomeState extends State<BookWashHome> {
                           children: [
                             // Left side: Navigation controls with fixed width
                             SizedBox(
-                              width: 280,
+                              width: 320,
                               child: Row(
                                 children: [
                                   ElevatedButton.icon(
@@ -1894,6 +1917,8 @@ class _BookWashHomeState extends State<BookWashHome> {
         return Colors.red;
       case 'identifying':
         return Colors.orange;
+      case 'verifying':
+        return Colors.teal;
       default:
         return Colors.orange;
     }
@@ -1919,6 +1944,9 @@ class _BookWashHomeState extends State<BookWashHome> {
           break;
         case 'violence':
           subPhaseLabel = '⚔️ Violence cleaning';
+          break;
+        case 'verifying':
+          subPhaseLabel = '✅ Verifying cleaned content';
           break;
         default:
           subPhaseLabel = '🧹 Cleaning';
