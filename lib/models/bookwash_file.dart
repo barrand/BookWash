@@ -33,6 +33,7 @@ class BookWashFile {
 
 class BookWashChapter {
   int number;
+  String sectionLabel; // Label from TOC (e.g., "Chapter 1", "Copyright", etc.)
   String title;
   String? file;
   ChapterRating? rating;
@@ -42,6 +43,7 @@ class BookWashChapter {
 
   BookWashChapter({
     required this.number,
+    this.sectionLabel = '',
     this.title = '',
     this.file,
     this.rating,
@@ -50,6 +52,13 @@ class BookWashChapter {
     List<BookWashChange>? changes,
   }) : contentLines = contentLines ?? [],
        changes = changes ?? [];
+
+  /// Get a display name for the chapter (section label or title or "Chapter N")
+  String get displayName {
+    if (sectionLabel.isNotEmpty) return sectionLabel;
+    if (title.isNotEmpty) return title;
+    return 'Chapter $number';
+  }
 }
 
 class ChapterRating {

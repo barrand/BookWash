@@ -55,13 +55,37 @@ class BookWashParser {
         } else if (line.startsWith('#CHAPTER:')) {
           inHeader = false;
           // Fall through to chapter parsing
+        } else if (line.startsWith('#SECTION:')) {
+          inHeader = false;
+          // Fall through to chapter parsing
         } else {
           continue;
         }
       }
 
-      // Chapter parsing
-      if (line.startsWith('#CHAPTER:')) {
+      // Chapter parsing - support both #SECTION: (new) and #CHAPTER: (legacy)
+      if (line.startsWith('#SECTION:')) {
+        // Save previous chapter
+        if (currentChapter != null) {
+          if (currentChange != null) {
+            currentChange.original = originalLines.join('\n');
+            currentChange.cleaned = cleanedLines.join('\n');
+            currentChapter.changes.add(currentChange);
+          }
+          bookwash.chapters.add(currentChapter);
+        }
+
+        final sectionLabel = line.substring(9).trim();
+        currentChapter = BookWashChapter(
+          number: bookwash.chapters.length + 1,
+          sectionLabel: sectionLabel,
+        );
+        currentChange = null;
+        inOriginal = false;
+        inCleaned = false;
+        originalLines.clear();
+        cleanedLines.clear();
+      } else if (line.startsWith('#CHAPTER:')) {
         // Save previous chapter
         if (currentChapter != null) {
           if (currentChange != null) {
@@ -73,7 +97,11 @@ class BookWashParser {
         }
 
         final numStr = line.substring(9).trim();
-        currentChapter = BookWashChapter(number: int.tryParse(numStr) ?? 0);
+        final chapterNum = int.tryParse(numStr) ?? 0;
+        currentChapter = BookWashChapter(
+          number: chapterNum,
+          sectionLabel: 'Chapter $chapterNum',
+        );
         currentChange = null;
         inOriginal = false;
         inCleaned = false;
@@ -214,7 +242,7 @@ class BookWashParser {
 
     // Chapters
     for (final chapter in bookwash.chapters) {
-      lines.add('#CHAPTER: ${chapter.number}');
+      lines.add('#SECTION: ${chapter.sectionLabel}');
 
       if (chapter.title.isNotEmpty) {
         lines.add('#TITLE: ${chapter.title}');

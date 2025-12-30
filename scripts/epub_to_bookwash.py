@@ -18,6 +18,7 @@ import re
 import shutil
 import zipfile
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -192,7 +193,8 @@ class EPUBParser:
         self.metadata = {}
         self.manifest = {}  # id -> {href, media-type}
         self.spine = []  # list of manifest ids in reading order
-        self.chapters = []  # list of {id, title, paragraphs}
+        self.toc_labels = {}  # href -> label from NCX/nav TOC
+        self.chapters = []  # list of {id, href, title, section_label, paragraphs}
         self.images = []  # list of {id, href, media-type}
         self.cover_image = None
     
@@ -203,6 +205,7 @@ class EPUBParser:
         try:
             self._find_opf()
             self._parse_opf()
+            self._parse_toc()
             self._extract_chapters()
             self._find_images()
         finally:
@@ -327,8 +330,101 @@ class EPUBParser:
                 'media-type': self.manifest[cover_id]['media-type']
             }
     
+    def _parse_toc(self):
+        """Parse table of contents (NCX for EPUB2, nav for EPUB3) to get section labels."""
+        # First, look for NCX file in manifest
+        ncx_path = None
+        nav_path = None
+        
+        for item_id, item in self.manifest.items():
+            media_type = item.get('media-type', '')
+            if media_type == 'application/x-dtbncx+xml':
+                ncx_path = self.opf_dir + item['href']
+            elif 'nav' in (item.get('properties', '') or '').lower():
+                # EPUB3 nav document
+                nav_path = self.opf_dir + item['href']
+        
+        # Try NCX first (EPUB2)
+        if ncx_path:
+            try:
+                ncx_content = self.zip_file.read(ncx_path)
+                root = ET.fromstring(ncx_content)
+                self._parse_ncx(root)
+            except Exception as e:
+                print(f"Warning: Could not parse NCX: {e}")
+        
+        # If no NCX labels found, try EPUB3 nav
+        if not self.toc_labels and nav_path:
+            try:
+                nav_content = self.zip_file.read(nav_path)
+                self._parse_nav(nav_content.decode('utf-8'))
+            except Exception as e:
+                print(f"Warning: Could not parse nav: {e}")
+    
+    def _parse_ncx(self, root):
+        """Parse NCX table of contents to extract href -> label mapping."""
+        nav_map = root.find('ncx:navMap', self.NAMESPACES)
+        if nav_map is None:
+            nav_map = root.find('{*}navMap')
+        
+        if nav_map is None:
+            return
+        
+        def process_navpoint(navpoint):
+            """Recursively process navPoint elements."""
+            # Get label
+            label_elem = navpoint.find('ncx:navLabel/ncx:text', self.NAMESPACES)
+            if label_elem is None:
+                label_elem = navpoint.find('{*}navLabel/{*}text')
+            
+            # Get content src
+            content_elem = navpoint.find('ncx:content', self.NAMESPACES)
+            if content_elem is None:
+                content_elem = navpoint.find('{*}content')
+            
+            if label_elem is not None and content_elem is not None:
+                label = label_elem.text.strip() if label_elem.text else None
+                src = content_elem.get('src', '')
+                
+                if label and src:
+                    # Remove fragment identifier (#...) for matching
+                    href = src.split('#')[0]
+                    # Normalize the href (just the filename)
+                    href_normalized = Path(href).name
+                    self.toc_labels[href_normalized] = label
+            
+            # Process nested navPoints
+            for child in navpoint.findall('ncx:navPoint', self.NAMESPACES):
+                process_navpoint(child)
+            for child in navpoint.findall('{*}navPoint'):
+                process_navpoint(child)
+        
+        for navpoint in nav_map.findall('ncx:navPoint', self.NAMESPACES):
+            process_navpoint(navpoint)
+        for navpoint in nav_map.findall('{*}navPoint'):
+            process_navpoint(navpoint)
+    
+    def _parse_nav(self, nav_content: str):
+        """Parse EPUB3 nav document to extract href -> label mapping."""
+        # Simple parsing for EPUB3 nav - look for <a href="...">label</a>
+        import re
+        
+        # Find all anchor tags in nav element
+        # This is a simplified parser; a proper implementation would use proper HTML parsing
+        pattern = r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]+)</a>'
+        for match in re.finditer(pattern, nav_content):
+            href = match.group(1)
+            label = match.group(2).strip()
+            if href and label:
+                # Remove fragment identifier
+                href = href.split('#')[0]
+                href_normalized = Path(href).name
+                self.toc_labels[href_normalized] = label
+
     def _extract_chapters(self):
         """Extract chapter content from spine items."""
+        untitled_counter = 0
+        
         for item_id in self.spine:
             if item_id not in self.manifest:
                 continue
@@ -359,10 +455,23 @@ class EPUBParser:
                 # Use extracted title or fall back to item ID
                 chapter_title = title or item_id
                 
+                # Get section label from TOC, or synthesize one
+                href_filename = Path(href).name
+                if href_filename in self.toc_labels:
+                    section_label = self.toc_labels[href_filename]
+                elif title:
+                    # Use the H1 title if available
+                    section_label = title
+                else:
+                    # Synthesize a label for unlisted items
+                    untitled_counter += 1
+                    section_label = f"[Section {untitled_counter}]"
+                
                 self.chapters.append({
                     'id': item_id,
                     'href': href,
                     'title': chapter_title,
+                    'section_label': section_label,
                     'paragraphs': paragraphs,
                 })
             except Exception as e:
@@ -438,7 +547,11 @@ class BookWashWriter:
         # Header
         lines.append('#BOOKWASH 1.0')
         lines.append(f'#SOURCE: {self.source_filename}')
-        lines.append(f'#CREATED: {datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")}')
+        # Use Mountain Time for human-readable timestamp
+        mt = ZoneInfo('America/Denver')
+        now = datetime.now(mt)
+        timestamp = now.strftime('%m/%d/%y %I:%M%p MT').lower()[:-2] + 'MT'
+        lines.append(f'#CREATED: {timestamp}')
         lines.append(f'#ASSETS: {assets_folder}')
         
         # Metadata
@@ -472,10 +585,13 @@ class BookWashWriter:
         
         # Chapters
         for i, chapter in enumerate(self.parser.chapters, 1):
-            lines.append(f'#CHAPTER: {i}')
+            # Use section_label from TOC (e.g., "Chapter 1", "Copyright", "Acknowledgments")
+            section_label = chapter.get('section_label', f'Section {i}')
+            lines.append(f'#SECTION: {section_label}')
             
+            # Add title if it's different from section label (and meaningful)
             title = chapter['title']
-            if title and title != chapter['id']:
+            if title and title != chapter['id'] and title != section_label:
                 lines.append(f'#TITLE: {title}')
             
             lines.append('')  # Blank line after chapter header
