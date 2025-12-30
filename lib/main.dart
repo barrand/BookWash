@@ -69,6 +69,9 @@ class _BookWashHomeState extends State<BookWashHome> {
     'goddamn': true,
     'jesus christ': true,
     'oh my god': true,
+    // Racial slurs
+    'racial slurs':
+        false, // Meta-option: instructs LLM to remove all racial slurs
   };
   int sexualContentLevel = 2; // Default: PG sexual content
   int violenceLevel = 4; // Default: Unfiltered (no censorship)
@@ -985,9 +988,9 @@ class _BookWashHomeState extends State<BookWashHome> {
 
   /// Build a rich text widget showing removed words highlighted in red
   Widget _buildOriginalHighlight(String original, String cleaned) {
-    // Split into words preserving spaces
-    final words = original.split(' ');
-    final cleanedWords = cleaned.split(' ');
+    // Split into words by any whitespace (spaces, newlines, tabs)
+    final words = original.split(RegExp(r'\s+'));
+    final cleanedWords = cleaned.split(RegExp(r'\s+'));
 
     return RichText(
       text: TextSpan(
@@ -1016,9 +1019,9 @@ class _BookWashHomeState extends State<BookWashHome> {
 
   /// Build a rich text widget showing added/modified words highlighted in green
   Widget _buildCleanedHighlight(String original, String cleaned) {
-    // Split into words preserving spaces
-    final words = cleaned.split(' ');
-    final originalWords = original.split(' ');
+    // Split into words by any whitespace (spaces, newlines, tabs)
+    final words = cleaned.split(RegExp(r'\s+'));
+    final originalWords = original.split(RegExp(r'\s+'));
 
     return RichText(
       text: TextSpan(
@@ -2188,11 +2191,23 @@ class _BookWashHomeState extends State<BookWashHome> {
           'jesus christ',
           'oh my god',
         ], Colors.purple),
+        const SizedBox(height: 12),
+        _buildWordGroup(
+          'Racial Slurs',
+          ['racial slurs'],
+          Colors.brown,
+          isMetaOption: true,
+        ),
       ],
     );
   }
 
-  Widget _buildWordGroup(String label, List<String> displayWords, Color color) {
+  Widget _buildWordGroup(
+    String label,
+    List<String> displayWords,
+    Color color, {
+    bool isMetaOption = false,
+  }) {
     // Map display words to actual keys
     final Map<String, String> wordKeyMap = {
       'sh*t': 'shit',
@@ -2263,32 +2278,61 @@ class _BookWashHomeState extends State<BookWashHome> {
           ],
         ),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 4,
-          children: displayWords.map((displayWord) {
-            final actualKey = wordKeyMap[displayWord] ?? displayWord;
-            return SizedBox(
-              width: 140,
-              child: CheckboxListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                visualDensity: VisualDensity.compact,
-                title: Text(displayWord, style: const TextStyle(fontSize: 13)),
-                value: languageWordSelection[actualKey] ?? false,
-                onChanged: isProcessing
-                    ? null
-                    : (bool? value) {
-                        setState(() {
-                          languageWordSelection[actualKey] = value ?? false;
-                        });
-                        _saveLanguageWords();
-                      },
-                controlAffinity: ListTileControlAffinity.leading,
-              ),
-            );
-          }).toList(),
-        ),
+        if (isMetaOption)
+          // Single checkbox for meta options like "racial slurs"
+          CheckboxListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+            visualDensity: VisualDensity.compact,
+            title: Text(
+              'Remove all racial slurs and epithets',
+              style: TextStyle(fontSize: 13, color: color),
+            ),
+            subtitle: const Text(
+              'Instructs the AI to identify and replace racial slurs with appropriate alternatives',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+            value: languageWordSelection['racial slurs'] ?? false,
+            onChanged: isProcessing
+                ? null
+                : (bool? value) {
+                    setState(() {
+                      languageWordSelection['racial slurs'] = value ?? false;
+                    });
+                    _saveLanguageWords();
+                  },
+            controlAffinity: ListTileControlAffinity.leading,
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: displayWords.map((displayWord) {
+              final actualKey = wordKeyMap[displayWord] ?? displayWord;
+              return SizedBox(
+                width: 140,
+                child: CheckboxListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  visualDensity: VisualDensity.compact,
+                  title: Text(
+                    displayWord,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  value: languageWordSelection[actualKey] ?? false,
+                  onChanged: isProcessing
+                      ? null
+                      : (bool? value) {
+                          setState(() {
+                            languageWordSelection[actualKey] = value ?? false;
+                          });
+                          _saveLanguageWords();
+                        },
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+              );
+            }).toList(),
+          ),
       ],
     );
   }

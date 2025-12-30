@@ -78,7 +78,7 @@ def parse_bookwash(filepath: str) -> BookwashFile:
     )
     
     # Parse header metadata
-    header_match = re.search(r'#BOOKWASH.*?(?=#CHAPTER:|\Z)', content, re.DOTALL)
+    header_match = re.search(r'#BOOKWASH.*?(?=#SECTION:|#CHAPTER:|\Z)', content, re.DOTALL)
     if header_match:
         header = header_match.group(0)
         
@@ -102,16 +102,32 @@ def parse_bookwash(filepath: str) -> BookwashFile:
         if not book.title and book.source_epub:
             book.title = os.path.splitext(book.source_epub)[0].replace('_', ' ').replace('-', ' ').title()
     
-    # Parse chapters
+    # Parse chapters - support both #SECTION: (new) and #CHAPTER: (legacy)
+    # First try #SECTION: format
+    section_pattern = r'#SECTION:\s*(.+?)\s*\n'
     chapter_pattern = r'#CHAPTER:\s*(\d+)\s*\n'
-    chapter_splits = re.split(chapter_pattern, content)
     
-    # chapter_splits: [header, ch_num, ch_content, ch_num, ch_content, ...]
+    # Check which format is used
+    if re.search(section_pattern, content):
+        chapter_splits = re.split(section_pattern, content)
+        use_section_format = True
+    else:
+        chapter_splits = re.split(chapter_pattern, content)
+        use_section_format = False
+    
+    # chapter_splits: [header, ch_label/num, ch_content, ch_label/num, ch_content, ...]
+    ch_counter = 0
     for i in range(1, len(chapter_splits), 2):
         if i + 1 >= len(chapter_splits):
             break
         
-        ch_num = int(chapter_splits[i])
+        ch_counter += 1
+        if use_section_format:
+            section_label = chapter_splits[i]
+            ch_num = ch_counter
+        else:
+            ch_num = int(chapter_splits[i])
+            section_label = f"Chapter {ch_num}"
         ch_content = chapter_splits[i + 1]
         
         # Parse chapter metadata
@@ -122,7 +138,7 @@ def parse_bookwash(filepath: str) -> BookwashFile:
         
         chapter = Chapter(
             number=ch_num,
-            title=title_match.group(1).strip() if title_match else f"Chapter {ch_num}",
+            title=title_match.group(1).strip() if title_match else section_label,
             file=file_match.group(1).strip() if file_match else "",
             rating=rating_match.group(1).strip() if rating_match else "",
             needs_cleaning=needs_match.group(1).strip().lower() == 'true' if needs_match else False,
