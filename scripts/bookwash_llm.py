@@ -2635,7 +2635,7 @@ def cmd_clean_passes(bw: BookWashFile, client: GeminiClient, filepath: Path,
     print(f"Target levels: adult={LEVEL_TO_RATING[target_sexual]}, "
           f"violence={LEVEL_TO_RATING[target_violence]}")
     if client.language_words:
-        print(f"Language words: {', '.join(client.language_words[:5])}{'...' if len(client.language_words) > 5 else ''}")
+        print(f"Language words: {len(client.language_words)} configured")
     print()
     
     total_changes = 0

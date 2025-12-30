@@ -231,6 +231,7 @@ def reconstruct_chapter_text(chapter: Chapter, mode: str) -> str:
         # Skip chapter metadata (handle both with and without colon suffix)
         if line.startswith('#TITLE:') or line.startswith('#FILE:') or \
            line.startswith('#RATING:') or line.startswith('#NEEDS_CLEANING') or \
+           line.startswith('#PENDING_CLEANING') or \
            line.startswith('#NEEDS_LANGUAGE_CLEANING') or \
            line.startswith('#NEEDS_ADULT_CLEANING') or \
            line.startswith('#NEEDS_VIOLENCE_CLEANING'):
@@ -388,6 +389,10 @@ def text_to_xhtml(text: str, title: str) -> str:
         para_text = para_text.strip()
         
         if para_text.lower() == title.lower() and not title_emitted:
+            # Skip synthetic section labels like "[Section 2]"
+            if re.match(r'^\[Section \d+\]$', para_text):
+                title_emitted = True  # Mark as emitted so we don't add it later
+                continue
             # This is the title - emit it as H1 if it isn't already marked as one
             if is_heading:
                 # Already marked, convert and emit
@@ -419,7 +424,8 @@ def text_to_xhtml(text: str, title: str) -> str:
             first_content_para = False
     
     # If no title was emitted yet, add it at the top
-    if not title_emitted and title:
+    # But skip synthetic section labels like "[Section 2]"
+    if not title_emitted and title and not re.match(r'^\[Section \d+\]$', title):
         xhtml_parts.insert(xhtml_parts.index('<body>') + 1, f'  <h1>{html_escape(title)}</h1>')
     
     xhtml_parts.append('</body>')
