@@ -762,11 +762,6 @@ class _BookWashHomeState extends State<BookWashHome> {
     // Use full path to python3 to avoid xcrun issues in sandbox
     final python3Path = '/usr/bin/python3';
 
-    _addLogMessage('🔧 Python path: $python3Path');
-    print('🔧 Python path: $python3Path');
-    _addLogMessage('🔧 Running: $python3Path -u $scriptPath ${args.join(" ")}');
-    print('🔧 Running: $python3Path -u $scriptPath ${args.join(" ")}');
-
     try {
       final process = await Process.start(
         python3Path,
