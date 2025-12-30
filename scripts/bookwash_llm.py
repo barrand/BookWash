@@ -45,6 +45,9 @@ from pathlib import Path
 from typing import Optional, Callable
 from zoneinfo import ZoneInfo
 
+# Import language prefilter for regex-based profanity replacement
+from language_prefilter import prefilter_language, get_replacement_count
+
 # Force unbuffered output for real-time logging
 print = functools.partial(print, flush=True)
 
@@ -466,6 +469,25 @@ def parse_bookwash(filepath: Path) -> BookWashFile:
     # Add last chapter
     if current_chapter is not None:
         bw.chapters.append(current_chapter)
+    
+    # Apply language prefilter to all chapters - regex replacement for unambiguous profanity
+    # This runs ONCE at load time, before any LLM processing
+    total_replacements = 0
+    for chapter in bw.chapters:
+        new_lines = []
+        for line in chapter.content_lines:
+            # Only prefilter content lines, not metadata/markup lines
+            if line.startswith('#'):
+                new_lines.append(line)
+            else:
+                filtered = prefilter_language(line)
+                if filtered != line:
+                    total_replacements += 1
+                new_lines.append(filtered)
+        chapter.content_lines = new_lines
+    
+    if total_replacements > 0:
+        print(f"✅ Prefilter: {total_replacements} auto-replacements (sh*t→crud, f*ck→screw, etc.)", file=sys.stderr)
     
     return bw
 
