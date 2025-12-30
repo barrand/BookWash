@@ -78,7 +78,18 @@ class _BookWashViewerState extends State<BookWashViewer> {
     }
   }
 
-  // Rebuild the cached changes list
+  // Parse change ID like "1.3" into sortable parts [chapter, change]
+  List<int> _parseChangeId(String id) {
+    final parts = id.split('.');
+    if (parts.length == 2) {
+      return [int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0];
+    }
+    // Fallback for old c001 format
+    final match = RegExp(r'c?(\d+)').firstMatch(id);
+    return [0, int.tryParse(match?.group(1) ?? '0') ?? 0];
+  }
+
+  // Rebuild the cached changes list (sorted by ID)
   void _rebuildChangesList() {
     if (_bookwashFile == null) {
       _cachedAllChanges = [];
@@ -90,6 +101,14 @@ class _BookWashViewerState extends State<BookWashViewer> {
         changes.add(MapEntry(i, change));
       }
     }
+    // Sort by change ID (1.1, 1.2, 2.1, etc.)
+    changes.sort((a, b) {
+      final aId = _parseChangeId(a.value.id);
+      final bId = _parseChangeId(b.value.id);
+      final chapterCompare = aId[0].compareTo(bId[0]);
+      if (chapterCompare != 0) return chapterCompare;
+      return aId[1].compareTo(bId[1]);
+    });
     _cachedAllChanges = changes;
   }
 

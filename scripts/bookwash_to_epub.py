@@ -78,7 +78,7 @@ def parse_bookwash(filepath: str) -> BookwashFile:
     )
     
     # Parse header metadata
-    header_match = re.search(r'#BOOKWASH.*?(?=#CHAPTER:|\Z)', content, re.DOTALL)
+    header_match = re.search(r'#BOOKWASH.*?(?=#SECTION:|#CHAPTER:|\Z)', content, re.DOTALL)
     if header_match:
         header = header_match.group(0)
         
@@ -102,16 +102,32 @@ def parse_bookwash(filepath: str) -> BookwashFile:
         if not book.title and book.source_epub:
             book.title = os.path.splitext(book.source_epub)[0].replace('_', ' ').replace('-', ' ').title()
     
-    # Parse chapters
+    # Parse chapters - support both #SECTION: (new) and #CHAPTER: (legacy)
+    # First try #SECTION: format
+    section_pattern = r'#SECTION:\s*(.+?)\s*\n'
     chapter_pattern = r'#CHAPTER:\s*(\d+)\s*\n'
-    chapter_splits = re.split(chapter_pattern, content)
     
-    # chapter_splits: [header, ch_num, ch_content, ch_num, ch_content, ...]
+    # Check which format is used
+    if re.search(section_pattern, content):
+        chapter_splits = re.split(section_pattern, content)
+        use_section_format = True
+    else:
+        chapter_splits = re.split(chapter_pattern, content)
+        use_section_format = False
+    
+    # chapter_splits: [header, ch_label/num, ch_content, ch_label/num, ch_content, ...]
+    ch_counter = 0
     for i in range(1, len(chapter_splits), 2):
         if i + 1 >= len(chapter_splits):
             break
         
-        ch_num = int(chapter_splits[i])
+        ch_counter += 1
+        if use_section_format:
+            section_label = chapter_splits[i]
+            ch_num = ch_counter
+        else:
+            ch_num = int(chapter_splits[i])
+            section_label = f"Chapter {ch_num}"
         ch_content = chapter_splits[i + 1]
         
         # Parse chapter metadata
@@ -122,7 +138,7 @@ def parse_bookwash(filepath: str) -> BookwashFile:
         
         chapter = Chapter(
             number=ch_num,
-            title=title_match.group(1).strip() if title_match else f"Chapter {ch_num}",
+            title=title_match.group(1).strip() if title_match else section_label,
             file=file_match.group(1).strip() if file_match else "",
             rating=rating_match.group(1).strip() if rating_match else "",
             needs_cleaning=needs_match.group(1).strip().lower() == 'true' if needs_match else False,
@@ -212,9 +228,13 @@ def reconstruct_chapter_text(chapter: Chapter, mode: str) -> str:
     current_status = 'pending'
     
     for line in lines:
-        # Skip chapter metadata
+        # Skip chapter metadata (handle both with and without colon suffix)
         if line.startswith('#TITLE:') or line.startswith('#FILE:') or \
-           line.startswith('#RATING:') or line.startswith('#NEEDS_CLEANING:'):
+           line.startswith('#RATING:') or line.startswith('#NEEDS_CLEANING') or \
+           line.startswith('#PENDING_CLEANING') or \
+           line.startswith('#NEEDS_LANGUAGE_CLEANING') or \
+           line.startswith('#NEEDS_ADULT_CLEANING') or \
+           line.startswith('#NEEDS_VIOLENCE_CLEANING'):
             continue
         
         # Handle change block markers
@@ -289,11 +309,43 @@ def apply_changes(chapter: Chapter, mode: str) -> str:
     return reconstruct_chapter_text(chapter, mode)
 
 
+def convert_format_markers_to_html(text: str) -> str:
+    """Convert bookwash format markers to HTML tags.
+    
+    Markers:
+    - [H1]...[/H1] → <h1>...</h1>
+    - [H2]...[/H2] → <h2>...</h2>
+    - [B]...[/B] → <strong>...</strong>
+    - [I]...[/I] → <em>...</em>
+    - [U]...[/U] → <u>...</u>
+    - [BLOCKQUOTE]...[/BLOCKQUOTE] → <blockquote>...</blockquote>
+    """
+    # Map markers to HTML tags
+    replacements = [
+        ('[H1]', '<h1>'), ('[/H1]', '</h1>'),
+        ('[H2]', '<h2>'), ('[/H2]', '</h2>'),
+        ('[H3]', '<h3>'), ('[/H3]', '</h3>'),
+        ('[H4]', '<h4>'), ('[/H4]', '</h4>'),
+        ('[H5]', '<h5>'), ('[/H5]', '</h5>'),
+        ('[H6]', '<h6>'), ('[/H6]', '</h6>'),
+        ('[B]', '<strong>'), ('[/B]', '</strong>'),
+        ('[I]', '<em>'), ('[/I]', '</em>'),
+        ('[U]', '<u>'), ('[/U]', '</u>'),
+        ('[BLOCKQUOTE]', '<blockquote>'), ('[/BLOCKQUOTE]', '</blockquote>'),
+    ]
+    
+    result = text
+    for marker, html_tag in replacements:
+        result = result.replace(marker, html_tag)
+    
+    return result
+
+
 def text_to_xhtml(text: str, title: str) -> str:
     """Convert plain text chapter content to XHTML.
     
-    Always outputs the chapter title as an H1, then the content as paragraphs.
-    If the first paragraph matches the title, it's skipped to avoid duplication.
+    Converts format markers like [H1], [B], [I] to proper HTML.
+    Wraps non-heading paragraphs in <p> tags.
     """
     # Split into paragraphs
     paragraphs = text.strip().split('\n\n')
@@ -307,31 +359,74 @@ def text_to_xhtml(text: str, title: str) -> str:
     xhtml_parts.append('  <meta charset="UTF-8"/>')
     xhtml_parts.append('  <style type="text/css">')
     xhtml_parts.append('    body { font-family: Georgia, serif; margin: 2em; line-height: 1.6; }')
-    xhtml_parts.append('    h1 { text-align: center; margin-bottom: 2em; }')
+    xhtml_parts.append('    h1, h2, h3, h4, h5, h6 { text-align: center; margin-top: 1.5em; margin-bottom: 1em; }')
     xhtml_parts.append('    p { text-indent: 1.5em; margin: 0.5em 0; }')
     xhtml_parts.append('    p.first { text-indent: 0; }')
+    xhtml_parts.append('    blockquote { margin: 1em 2em; font-style: italic; }')
     xhtml_parts.append('  </style>')
     xhtml_parts.append('</head>')
     xhtml_parts.append('<body>')
     
-    # Always output the chapter title as H1
-    xhtml_parts.append(f'  <h1>{html_escape(title)}</h1>')
-    
     first_content_para = True
+    title_emitted = False
+    
     for i, para in enumerate(paragraphs):
         para = para.strip()
         if not para:
             continue
         
-        # Skip if this paragraph is just the chapter title (to avoid duplication)
-        if para.lower() == title.lower():
+        # Check if this paragraph is a heading (starts with [H1], [H2], etc.)
+        is_heading = para.startswith('[H1]') or para.startswith('[H2]') or \
+                     para.startswith('[H3]') or para.startswith('[H4]') or \
+                     para.startswith('[H5]') or para.startswith('[H6]')
+        
+        # Skip if this paragraph is just the chapter title (avoid duplication)
+        # Strip heading markers for comparison
+        para_text = para
+        for h in ['[H1]', '[/H1]', '[H2]', '[/H2]', '[H3]', '[/H3]', 
+                  '[H4]', '[/H4]', '[H5]', '[/H5]', '[H6]', '[/H6]']:
+            para_text = para_text.replace(h, '')
+        para_text = para_text.strip()
+        
+        if para_text.lower() == title.lower() and not title_emitted:
+            # Skip synthetic section labels like "[Section 2]"
+            if re.match(r'^\[Section \d+\]$', para_text):
+                title_emitted = True  # Mark as emitted so we don't add it later
+                continue
+            # This is the title - emit it as H1 if it isn't already marked as one
+            if is_heading:
+                # Already marked, convert and emit
+                para_html = convert_format_markers_to_html(html_escape(para))
+                # The html_escape happened before conversion, need different order
+                para_html = convert_format_markers_to_html(para)
+                # Now escape just the text content (already has HTML structure)
+                xhtml_parts.append(f'  {para_html}')
+            else:
+                xhtml_parts.append(f'  <h1>{html_escape(para_text)}</h1>')
+            title_emitted = True
             continue
         
-        # Handle single newlines as line breaks within paragraphs
-        para_html = html_escape(para).replace('\n', '<br/>\n')
-        css_class = ' class="first"' if first_content_para else ''
-        xhtml_parts.append(f'  <p{css_class}>{para_html}</p>')
-        first_content_para = False
+        if is_heading:
+            # It's a heading - convert markers and emit directly (no <p> wrapper)
+            para_html = convert_format_markers_to_html(para)
+            xhtml_parts.append(f'  {para_html}')
+            first_content_para = True  # Reset after heading
+        else:
+            # Regular paragraph - wrap in <p> and convert inline markers
+            # First escape special HTML chars in the text
+            para_escaped = html_escape(para)
+            # Then convert our markers to HTML (they contain [ ] not < >)
+            para_html = convert_format_markers_to_html(para_escaped)
+            # Handle single newlines as line breaks
+            para_html = para_html.replace('\n', '<br/>\n')
+            css_class = ' class="first"' if first_content_para else ''
+            xhtml_parts.append(f'  <p{css_class}>{para_html}</p>')
+            first_content_para = False
+    
+    # If no title was emitted yet, add it at the top
+    # But skip synthetic section labels like "[Section 2]"
+    if not title_emitted and title and not re.match(r'^\[Section \d+\]$', title):
+        xhtml_parts.insert(xhtml_parts.index('<body>') + 1, f'  <h1>{html_escape(title)}</h1>')
     
     xhtml_parts.append('</body>')
     xhtml_parts.append('</html>')

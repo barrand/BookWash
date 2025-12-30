@@ -566,7 +566,7 @@ def parse_bookwash_changes(bookwash_path: str) -> list:
         content = f.read()
     
     lines = content.split('\n')
-    current_chapter = None
+    chapter_count = 0
     current_chapter_title = ""
     current_change = None
     in_original = False
@@ -575,11 +575,18 @@ def parse_bookwash_changes(bookwash_path: str) -> list:
     cleaned_lines = []
     
     for line in lines:
-        if line.startswith('#CHAPTER:'):
-            current_chapter = int(line.split(':')[1].strip())
-            current_chapter_title = ""
-        elif line.startswith('#TITLE:') and current_chapter is not None:
+        if line.startswith('#SECTION:'):
+            chapter_count += 1
             current_chapter_title = line.split(':', 1)[1].strip()
+        elif line.startswith('#CHAPTER:'):
+            # Legacy format support
+            chapter_count = int(line.split(':')[1].strip())
+            current_chapter_title = f"Chapter {chapter_count}"
+        elif line.startswith('#TITLE:') and chapter_count > 0:
+            # Only update title if it differs from section label
+            title = line.split(':', 1)[1].strip()
+            if title != current_chapter_title:
+                current_chapter_title = title
         elif line.startswith('#CHANGE:'):
             # Save previous change
             if current_change is not None:
@@ -590,7 +597,7 @@ def parse_bookwash_changes(bookwash_path: str) -> list:
             change_id = line.split(':')[1].strip()
             current_change = {
                 "id": change_id,
-                "chapter": current_chapter,
+                "chapter": chapter_count,
                 "chapter_title": current_chapter_title,
                 "status": "pending",
                 "reason": "",

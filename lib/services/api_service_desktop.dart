@@ -166,7 +166,7 @@ class DesktopApiService implements ApiService {
           '-u',
           path.join(scriptsDir, 'bookwash_llm.py'),
           '--rate',
-          '--clean',
+          '--clean-passes',
           '--sexual',
           session.targetAdult.toString(),
           '--violence',

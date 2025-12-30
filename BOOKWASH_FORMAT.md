@@ -56,12 +56,20 @@ All markers begin with `#` at the start of a line. Markers are case-sensitive.
 | `#SETTINGS` | Processing settings used | No |
 | `#CHAPTER` | Chapter boundary | Yes (at least one) |
 | `#TITLE` | Chapter title | No |
+| `#RATING` | Chapter content ratings | No |
+| `#NEEDS_CLEANING` | Whether chapter needs any cleaning | No |
+| `#NEEDS_LANGUAGE_CLEANING` | Chapter exceeds language target | No |
+| `#NEEDS_ADULT_CLEANING` | Chapter exceeds adult content target | No |
+| `#NEEDS_VIOLENCE_CLEANING` | Chapter exceeds violence target | No |
 | `#IMAGE` | Image reference | No |
 | `#CHANGE` | Start of a change block | No |
 | `#ORIGINAL` | Original text within change | Yes (in change) |
 | `#CLEANED` | Cleaned text within change | Yes (in change) |
 | `#STATUS` | Review status of change | No (defaults to `pending`) |
 | `#REASON` | Why this change was made | No |
+| `#NEEDS_LANGUAGE_CLEANING` | Change block needs language cleaning | No (in change) |
+| `#NEEDS_ADULT_CLEANING` | Change block needs adult cleaning | No (in change) |
+| `#NEEDS_VIOLENCE_CLEANING` | Change block needs violence cleaning | No (in change) |
 | `#END` | End of a change block | Yes (in change) |
 
 ---
@@ -83,6 +91,11 @@ The file must begin with a header containing metadata.
 ```
 #MODIFIED: 2025-11-30T16:45:00Z
 #SETTINGS: target_language=2 target_sexual=2 target_violence=5
+#CLEANING_PROMPT_START
+# You are a content filter for books. Clean the following text...
+# (Full Gemini cleaning prompt used for this book)
+# ...
+#CLEANING_PROMPT_END
 #ASSETS: Original Book Title_assets/
 #AUTHOR: Jane Smith
 #PUBLISHER: Acme Publishing
@@ -101,6 +114,7 @@ The file must begin with a header containing metadata.
 | `#CREATED` | `#CREATED: <ISO8601>` | When file was created |
 | `#MODIFIED` | `#MODIFIED: <ISO8601>` | When file was last modified |
 | `#SETTINGS` | `#SETTINGS: <key>=<value> ...` | Space-separated key=value pairs |
+| `#CLEANING_PROMPT_START/END` | Multi-line block | The complete Gemini LLM prompt used for cleaning (for analysis/debugging). Each line prefixed with `#`. Optional. |
 | `#ASSETS` | `#ASSETS: <folder_path>` | Relative path to assets folder |
 | `#AUTHOR` | `#AUTHOR: <name>` | Book author(s) |
 | `#PUBLISHER` | `#PUBLISHER: <name>` | Publisher name |
@@ -127,6 +141,9 @@ Chapters are delimited by `#CHAPTER` markers.
 #CHAPTER: 1
 #TITLE: The Beginning
 #RATING: language=PG sexual=G violence=PG
+#NEEDS_LANGUAGE_CLEANING: false
+#NEEDS_ADULT_CLEANING: false
+#NEEDS_VIOLENCE_CLEANING: false
 #NEEDS_CLEANING: false
 
 This is the chapter content. It flows as normal paragraphs
@@ -142,7 +159,10 @@ This is another paragraph.
 | `#CHAPTER` | `#CHAPTER: <number>` | Chapter number (1-indexed) |
 | `#TITLE` | `#TITLE: <title>` | Chapter title (optional) |
 | `#RATING` | `#RATING: language=<L> sexual=<S> violence=<V>` | LLM-assessed content ratings (G, PG, PG-13, R, X) |
-| `#NEEDS_CLEANING` | `#NEEDS_CLEANING: true\|false` | Whether chapter exceeds user's target settings |
+| `#NEEDS_CLEANING` | `#NEEDS_CLEANING: true\|false` | Whether chapter needs any type of cleaning |
+| `#NEEDS_LANGUAGE_CLEANING` | `#NEEDS_LANGUAGE_CLEANING: true\|false` | Whether chapter exceeds language target |
+| `#NEEDS_ADULT_CLEANING` | `#NEEDS_ADULT_CLEANING: true\|false` | Whether chapter exceeds adult content target |
+| `#NEEDS_VIOLENCE_CLEANING` | `#NEEDS_VIOLENCE_CLEANING: true\|false` | Whether chapter exceeds violence target |
 
 ### Rating Values
 
@@ -178,9 +198,9 @@ Change blocks mark content that has been modified by the LLM.
 ### Basic Structure
 
 ```
-#CHANGE: c001
+#CHANGE: 1.1
 #STATUS: pending
-#REASON: sexual=PG-13 exceeds target=PG
+#NEEDS_ADULT_CLEANING
 #ORIGINAL
 She kissed him passionately, her body pressed against his,
 hands running through his hair.
@@ -189,11 +209,23 @@ She kissed him softly.
 #END
 ```
 
+### Cleaning Type Markers
+
+Change blocks include markers indicating which type(s) of cleaning are needed:
+
+| Marker | Description |
+|--------|-------------|
+| `#NEEDS_LANGUAGE_CLEANING` | Block contains language that needs filtering |
+| `#NEEDS_ADULT_CLEANING` | Block contains adult content that needs filtering |
+| `#NEEDS_VIOLENCE_CLEANING` | Block contains violence that needs filtering |
+
+A single change block can have multiple cleaning type markers if the content violates multiple targets. The cleaning pipeline processes each type separately with focused prompts.
+
 ### Change Fields
 
 | Field | Format | Description |
 |-------|--------|-------------|
-| `#CHANGE` | `#CHANGE: <id>` | Unique identifier (e.g., `c001`, `c002`) |
+| `#CHANGE` | `#CHANGE: <chapter>.<num>` | Chapter-scoped identifier (e.g., `1.1`, `2.3`) |
 | `#STATUS` | `#STATUS: <status>` | Review status |
 | `#REASON` | `#REASON: <text>` | Why this was flagged |
 | `#ORIGINAL` | `#ORIGINAL` | Marks start of original text |
@@ -213,8 +245,8 @@ She kissed him softly.
 
 1. `#ORIGINAL` and `#CLEANED` sections can span multiple lines
 2. Empty `#CLEANED` section means deletion
-3. Change IDs must be unique within the file
-4. Change IDs should be sequential within each chapter (e.g., `c001`, `c002`)
+3. Change IDs use format `<chapter_number>.<change_number>` (e.g., `1.1`, `1.2`, `2.1`)
+4. Change IDs are unique: chapter number ensures no duplicates across chapters
 
 ### Inline Position
 
@@ -222,7 +254,7 @@ Change blocks appear **inline** where the change occurs:
 
 ```
 He walked into the bar and 
-#CHANGE: c001
+#CHANGE: 3.1
 #STATUS: pending
 #ORIGINAL
 fucking
@@ -305,20 +337,25 @@ To include a literal `\#` at the start of a line:
 #BOOKWASH 1.0
 #SOURCE: The Adventure.epub
 #CREATED: 2025-11-30T14:32:00Z
-#SETTINGS: target_language=2 target_sexual=2 target_violence=5
+#SETTINGS: target_sexual=2 target_violence=5
 #ASSETS: The Adventure_assets/
 
 #IMAGE: cover.jpg
 
 #CHAPTER: 1
 #TITLE: A Dark Beginning
+#RATING: language=R sexual=G violence=G
+#NEEDS_LANGUAGE_CLEANING: true
+#NEEDS_ADULT_CLEANING: false
+#NEEDS_VIOLENCE_CLEANING: false
+#NEEDS_CLEANING: true
 
 The night was cold and silent. Marcus pulled his coat tighter
 as he walked through the empty streets.
 
-#CHANGE: c001
+#CHANGE: 1.1
 #STATUS: pending
-#REASON: language=R exceeds target=PG
+#NEEDS_LANGUAGE_CLEANING
 #ORIGINAL
 "What the fuck is going on?" he muttered.
 #CLEANED
@@ -329,12 +366,17 @@ He turned the corner and saw the old warehouse.
 
 #CHAPTER: 2
 #TITLE: The Discovery
+#RATING: language=G sexual=PG-13 violence=G
+#NEEDS_LANGUAGE_CLEANING: false
+#NEEDS_ADULT_CLEANING: true
+#NEEDS_VIOLENCE_CLEANING: false
+#NEEDS_CLEANING: true
 
 Inside, the air was thick with dust.
 
 #CHANGE: c002
 #STATUS: accepted
-#REASON: sexual=PG-13 exceeds target=PG
+#NEEDS_ADULT_CLEANING
 #ORIGINAL
 Sarah was waiting for him. She moved close, pressing her lips
 to his in a deep, lingering kiss that made his pulse race.
@@ -351,12 +393,17 @@ The artifact glowed with an eerie blue light.
 
 #CHAPTER: 3
 #TITLE: The Confrontation
+#RATING: language=G sexual=G violence=PG-13
+#NEEDS_LANGUAGE_CLEANING: false
+#NEEDS_ADULT_CLEANING: false
+#NEEDS_VIOLENCE_CLEANING: true
+#NEEDS_CLEANING: true
 
 Marcus faced the villain.
 
 #CHANGE: c003
 #STATUS: rejected
-#REASON: violence=PG-13 exceeds target=PG
+#NEEDS_VIOLENCE_CLEANING
 #ORIGINAL
 He threw a punch, connecting solidly with the man's jaw.
 #CLEANED
@@ -403,7 +450,34 @@ START → HEADER → CHAPTER → (CONTENT | CHANGE | IMAGE)* → CHAPTER → ...
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2025-12-17 | Added cleaning type markers (`#NEEDS_LANGUAGE_CLEANING`, `#NEEDS_ADULT_CLEANING`, `#NEEDS_VIOLENCE_CLEANING`); documented three-pass cleaning pipeline |
 | 1.0 | 2025-11-30 | Initial specification |
+
+---
+
+## Cleaning Pipeline
+
+The BookWash cleaning pipeline uses a **three-pass architecture** where each content type is cleaned separately with focused prompts:
+
+### Pass 1: Language Cleaning
+- Processes change blocks with `#NEEDS_LANGUAGE_CLEANING`
+- Uses a word-based filtering approach with user-specified word lists
+- Words categorized by severity (mild, moderate, strong, extreme)
+- Target level determines which severity categories to filter
+
+### Pass 2: Adult Content Cleaning
+- Processes change blocks with `#NEEDS_ADULT_CLEANING`
+- Uses bespoke prompts for each target level (G, PG, PG-13)
+- Levels 4-5 (R/Unrated) pass through unchanged
+- Preserves narrative context while reducing explicitness
+
+### Pass 3: Violence Cleaning
+- Processes change blocks with `#NEEDS_VIOLENCE_CLEANING`
+- Uses bespoke prompts for each target level (G, PG, PG-13)
+- Levels 4-5 (R/Unrated) pass through unchanged
+- Reduces graphic descriptions while maintaining story impact
+
+Each pass saves the file after completion for crash resilience.
 
 ---
 
@@ -411,7 +485,6 @@ START → HEADER → CHAPTER → (CONTENT | CHANGE | IMAGE)* → CHAPTER → ...
 
 - **Comments:** `// comment` lines for user notes
 - **Multiple output formats:** EPUB, PDF, TXT
-- **Change categories:** Tag changes by type (language, sexual, violence)
 - **Confidence scores:** LLM confidence in each change
 - **CSS restoration:** Full stylesheet preservation and application
 - **Internal links:** Preserve footnotes and cross-references

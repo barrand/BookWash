@@ -69,6 +69,9 @@ class _BookWashHomeState extends State<BookWashHome> {
     'goddamn': true,
     'jesus christ': true,
     'oh my god': true,
+    // Racial slurs
+    'racial slurs':
+        false, // Meta-option: instructs LLM to remove all racial slurs
   };
   int sexualContentLevel = 2; // Default: PG sexual content
   int violenceLevel = 4; // Default: Unfiltered (no censorship)
@@ -76,6 +79,7 @@ class _BookWashHomeState extends State<BookWashHome> {
   bool isCancelling = false;
   double progress = 0.0;
   String progressPhase = ''; // 'converting', 'rating', 'cleaning'
+  String cleaningSubPhase = ''; // 'language', 'adult', 'violence'
   int progressCurrent = 0;
   int progressTotal = 0;
   bool showDetails = false;
@@ -522,7 +526,7 @@ class _BookWashHomeState extends State<BookWashHome> {
 
       final llmResult = await _runPythonScript('scripts/bookwash_llm.py', [
         '--rate',
-        '--clean',
+        '--clean-passes',
         bookwashPath,
         '--api-key',
         geminiApiKey,
@@ -531,7 +535,7 @@ class _BookWashHomeState extends State<BookWashHome> {
         '--language-words',
         jsonEncode(selectedWords),
         '--filter-types',
-        'language', // Only language filtering via checkboxes
+        'language,sexual,violence', // Filter all content types
         '--sexual',
         sexualContentLevel.toString(),
         '--violence',
@@ -634,37 +638,84 @@ class _BookWashHomeState extends State<BookWashHome> {
         progressTotal = total;
 
         // Calculate progress: 5% for conversion, 45% for rating, 50% for cleaning
+        // Cleaning is split: 50-65% language, 65-80% adult, 80-100% violence
         if (progressPhase == 'rating') {
           progress = 0.05 + (current / total) * 0.45;
         } else if (progressPhase == 'cleaning') {
-          progress = 0.50 + (current / total) * 0.50;
+          // Base progress depends on which cleaning sub-phase
+          // 4 sub-phases: language, adult, violence, verifying
+          // They share the 50% cleaning portion (50% to 100%)
+          double baseProgress = 0.50;
+          double subPhaseWeight =
+              0.125; // Each sub-phase is 12.5% of total (50% / 4)
+
+          if (cleaningSubPhase == 'language') {
+            baseProgress = 0.50;
+          } else if (cleaningSubPhase == 'adult') {
+            baseProgress = 0.625;
+          } else if (cleaningSubPhase == 'violence') {
+            baseProgress = 0.75;
+          } else if (cleaningSubPhase == 'verifying') {
+            baseProgress = 0.875;
+          }
+
+          progress = baseProgress + (current / total) * subPhaseWeight;
         }
       });
     }
 
     // Detect phase transitions
-    if (line.contains('Rating') && line.contains('chapters...')) {
+    if (line.contains('PASS A: Rating') && line.contains('chapters')) {
       final countMatch = RegExp(r'Rating (\d+) chapters').firstMatch(line);
       if (countMatch != null) {
         setState(() {
           progressPhase = 'rating';
+          cleaningSubPhase = '';
           progressTotal = int.tryParse(countMatch.group(1) ?? '0') ?? 0;
           progressCurrent = 0;
         });
       }
-    } else if (line.contains('Cleaning') && line.contains('chapters...')) {
-      final countMatch = RegExp(r'Cleaning (\d+) chapters').firstMatch(line);
+    } else if (line.contains('CLEANING PIPELINE:') &&
+        line.contains('chapters')) {
+      final countMatch = RegExp(r'PIPELINE: (\d+) chapters').firstMatch(line);
       if (countMatch != null) {
         setState(() {
           progressPhase = 'cleaning';
+          cleaningSubPhase = 'identifying';
           progressTotal = int.tryParse(countMatch.group(1) ?? '0') ?? 0;
           progressCurrent = 0;
           progress = 0.50; // Start cleaning at 50%
         });
       }
+    } else if (line.contains('=== PASS 1: LANGUAGE CLEANING ===')) {
+      setState(() {
+        cleaningSubPhase = 'language';
+        progressCurrent = 0;
+      });
+    } else if (line.contains('=== PASS 2: ADULT CONTENT CLEANING ===')) {
+      setState(() {
+        cleaningSubPhase = 'adult';
+        progressCurrent = 0;
+      });
+    } else if (line.contains('=== PASS 3: VIOLENCE CLEANING ===')) {
+      setState(() {
+        cleaningSubPhase = 'violence';
+        progressCurrent = 0;
+      });
+    } else if (line.contains('=== VERIFYING CLEANED CONTENT')) {
+      // Parse count from "=== VERIFYING CLEANED CONTENT (X chapters, Y workers) ==="
+      final countMatch = RegExp(r'\((\d+) chapters').firstMatch(line);
+      setState(() {
+        cleaningSubPhase = 'verifying';
+        progressCurrent = 0;
+        if (countMatch != null) {
+          progressTotal = int.tryParse(countMatch.group(1) ?? '0') ?? 0;
+        }
+      });
     } else if (line.contains('No chapters need cleaning')) {
       setState(() {
         progressPhase = 'cleaning';
+        cleaningSubPhase = '';
         progress = 1.0;
       });
     }
@@ -710,11 +761,6 @@ class _BookWashHomeState extends State<BookWashHome> {
 
     // Use full path to python3 to avoid xcrun issues in sandbox
     final python3Path = '/usr/bin/python3';
-
-    _addLogMessage('🔧 Python path: $python3Path');
-    print('🔧 Python path: $python3Path');
-    _addLogMessage('🔧 Running: $python3Path -u $scriptPath ${args.join(" ")}');
-    print('🔧 Running: $python3Path -u $scriptPath ${args.join(" ")}');
 
     try {
       final process = await Process.start(
@@ -785,7 +831,18 @@ class _BookWashHomeState extends State<BookWashHome> {
     }
   }
 
-  // Get all pending changes across all chapters
+  // Parse change ID like "1.3" into sortable parts [chapter, change]
+  List<int> _parseChangeId(String id) {
+    final parts = id.split('.');
+    if (parts.length == 2) {
+      return [int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0];
+    }
+    // Fallback for old c001 format
+    final match = RegExp(r'c?(\d+)').firstMatch(id);
+    return [0, int.tryParse(match?.group(1) ?? '0') ?? 0];
+  }
+
+  // Get all pending changes across all chapters, sorted by ID
   List<MapEntry<int, BookWashChange>> get _allPendingChanges {
     if (bookwashFile == null) return [];
     final changes = <MapEntry<int, BookWashChange>>[];
@@ -796,10 +853,18 @@ class _BookWashHomeState extends State<BookWashHome> {
         }
       }
     }
+    // Sort by change ID (1.1, 1.2, 2.1, etc.)
+    changes.sort((a, b) {
+      final aId = _parseChangeId(a.value.id);
+      final bId = _parseChangeId(b.value.id);
+      final chapterCompare = aId[0].compareTo(bId[0]);
+      if (chapterCompare != 0) return chapterCompare;
+      return aId[1].compareTo(bId[1]);
+    });
     return changes;
   }
 
-  // Get all changes (for stats)
+  // Get all changes (for stats), sorted by ID
   List<MapEntry<int, BookWashChange>> get _allChanges {
     if (bookwashFile == null) return [];
     final changes = <MapEntry<int, BookWashChange>>[];
@@ -808,6 +873,14 @@ class _BookWashHomeState extends State<BookWashHome> {
         changes.add(MapEntry(i, change));
       }
     }
+    // Sort by change ID (1.1, 1.2, 2.1, etc.)
+    changes.sort((a, b) {
+      final aId = _parseChangeId(a.value.id);
+      final bId = _parseChangeId(b.value.id);
+      final chapterCompare = aId[0].compareTo(bId[0]);
+      if (chapterCompare != 0) return chapterCompare;
+      return aId[1].compareTo(bId[1]);
+    });
     return changes;
   }
 
@@ -816,6 +889,17 @@ class _BookWashHomeState extends State<BookWashHome> {
       change.status = 'accepted';
     });
     _moveToNextChange();
+  }
+
+  void _acceptAllChanges() {
+    setState(() {
+      for (final entry in _allPendingChanges) {
+        entry.value.status = 'accepted';
+      }
+    });
+    _addLogMessage(
+      '✅ Accepted all ${_allPendingChanges.length} pending changes',
+    );
   }
 
   void _rejectChange(BookWashChange change) {
@@ -899,13 +983,13 @@ class _BookWashHomeState extends State<BookWashHome> {
 
   /// Build a rich text widget showing removed words highlighted in red
   Widget _buildOriginalHighlight(String original, String cleaned) {
-    // Split into words preserving spaces
-    final words = original.split(' ');
-    final cleanedWords = cleaned.split(' ');
+    // Split into words by any whitespace (spaces, newlines, tabs)
+    final words = original.split(RegExp(r'\s+'));
+    final cleanedWords = cleaned.split(RegExp(r'\s+'));
 
     return RichText(
       text: TextSpan(
-        style: const TextStyle(color: Colors.white, fontSize: 13),
+        style: const TextStyle(color: Color(0xFF212121), fontSize: 14),
         children: words.asMap().entries.map((entry) {
           final index = entry.key;
           final word = entry.value;
@@ -917,9 +1001,9 @@ class _BookWashHomeState extends State<BookWashHome> {
             text: index < words.length - 1 ? '$word ' : word,
             style: TextStyle(
               backgroundColor: isRemoved
-                  ? Colors.red.withOpacity(0.5)
+                  ? const Color(0xFFEF5350)
                   : Colors.transparent,
-              color: isRemoved ? Colors.red[100] : Colors.white,
+              color: isRemoved ? Colors.white : const Color(0xFF212121),
               fontWeight: isRemoved ? FontWeight.bold : FontWeight.normal,
             ),
           );
@@ -930,13 +1014,13 @@ class _BookWashHomeState extends State<BookWashHome> {
 
   /// Build a rich text widget showing added/modified words highlighted in green
   Widget _buildCleanedHighlight(String original, String cleaned) {
-    // Split into words preserving spaces
-    final words = cleaned.split(' ');
-    final originalWords = original.split(' ');
+    // Split into words by any whitespace (spaces, newlines, tabs)
+    final words = cleaned.split(RegExp(r'\s+'));
+    final originalWords = original.split(RegExp(r'\s+'));
 
     return RichText(
       text: TextSpan(
-        style: const TextStyle(color: Colors.white, fontSize: 13),
+        style: const TextStyle(color: Color(0xFF212121), fontSize: 14),
         children: words.asMap().entries.map((entry) {
           final index = entry.key;
           final word = entry.value;
@@ -948,9 +1032,9 @@ class _BookWashHomeState extends State<BookWashHome> {
             text: index < words.length - 1 ? '$word ' : word,
             style: TextStyle(
               backgroundColor: isAdded
-                  ? Colors.green.withOpacity(0.4)
+                  ? const Color(0xFF66BB6A)
                   : Colors.transparent,
-              color: isAdded ? Colors.green[100] : Colors.white,
+              color: isAdded ? Colors.white : const Color(0xFF212121),
               fontWeight: isAdded ? FontWeight.bold : FontWeight.normal,
             ),
           );
@@ -1200,7 +1284,10 @@ class _BookWashHomeState extends State<BookWashHome> {
                     icon: const Icon(Icons.cancel),
                     label: Text(isCancelling ? 'Cancelling...' : 'Cancel'),
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 16,
+                        horizontal: 24,
+                      ),
                       backgroundColor: Colors.red.withOpacity(0.8),
                     ),
                   ),
@@ -1217,15 +1304,78 @@ class _BookWashHomeState extends State<BookWashHome> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Step 3: Processing',
-                        style: TextStyle(
+                      Text(
+                        progressPhase == 'converting'
+                            ? 'Step 3: Converting to BookWash Format'
+                            : progressPhase == 'rating'
+                            ? 'Step 3: Rating Chapters'
+                            : progressPhase == 'cleaning'
+                            ? 'Step 3: Cleaning Chapters'
+                            : progressPhase == 'complete'
+                            ? 'Step 3: Complete'
+                            : 'Step 3: Processing',
+                        style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       const SizedBox(height: 12),
-                      LinearProgressIndicator(value: progress, minHeight: 8),
+                      // Segmented progress bar for cleaning
+                      if (progressPhase == 'cleaning') ...[
+                        // Show 4-segment progress bar for cleaning phases
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      _buildCleaningPhaseSegment(
+                                        'Language',
+                                        cleaningSubPhase == 'language',
+                                        cleaningSubPhase == 'adult' ||
+                                            cleaningSubPhase == 'violence' ||
+                                            cleaningSubPhase == 'verifying',
+                                        Colors.purple,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      _buildCleaningPhaseSegment(
+                                        'Adult',
+                                        cleaningSubPhase == 'adult',
+                                        cleaningSubPhase == 'violence' ||
+                                            cleaningSubPhase == 'verifying',
+                                        Colors.pink,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      _buildCleaningPhaseSegment(
+                                        'Violence',
+                                        cleaningSubPhase == 'violence',
+                                        cleaningSubPhase == 'verifying',
+                                        Colors.red,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      _buildCleaningPhaseSegment(
+                                        'Verify',
+                                        cleaningSubPhase == 'verifying',
+                                        false,
+                                        Colors.teal,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  LinearProgressIndicator(
+                                    value: progress,
+                                    minHeight: 8,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        LinearProgressIndicator(value: progress, minHeight: 8),
+                      ],
                       const SizedBox(height: 8),
                       Row(
                         children: [
@@ -1248,25 +1398,21 @@ class _BookWashHomeState extends State<BookWashHome> {
                                 color: progressPhase == 'rating'
                                     ? Colors.blue.withOpacity(0.2)
                                     : progressPhase == 'cleaning'
-                                    ? Colors.orange.withOpacity(0.2)
+                                    ? _getCleaningSubPhaseColor().withOpacity(
+                                        0.2,
+                                      )
                                     : Colors.grey.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                progressPhase == 'converting'
-                                    ? '📝 Converting...'
-                                    : progressPhase == 'rating'
-                                    ? '📊 Rating${progressTotal > 0 ? ' $progressCurrent/$progressTotal chapters' : '...'}'
-                                    : progressPhase == 'cleaning'
-                                    ? '🧹 Cleaning${progressTotal > 0 ? ' $progressCurrent/$progressTotal chapters' : '...'}'
-                                    : progressPhase,
+                                _getProgressStatusText(),
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                   color: progressPhase == 'rating'
                                       ? Colors.blue
                                       : progressPhase == 'cleaning'
-                                      ? Colors.orange
+                                      ? _getCleaningSubPhaseColor()
                                       : Colors.grey,
                                 ),
                               ),
@@ -1546,70 +1692,113 @@ class _BookWashHomeState extends State<BookWashHome> {
                         // Current change display
                         _buildCurrentChangeReview(),
                         const SizedBox(height: 16),
-                        // Navigation and action buttons
+                        // Navigation and action buttons - fixed layout to prevent jumping
                         Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            ElevatedButton.icon(
-                              onPressed: currentReviewChangeIndex > 0
-                                  ? () {
-                                      setState(() {
-                                        currentReviewChangeIndex--;
-                                        selectedReviewChapter =
-                                            _allPendingChanges[currentReviewChangeIndex]
-                                                .key;
-                                      });
-                                    }
-                                  : null,
-                              icon: const Icon(Icons.arrow_back),
-                              label: const Text('Previous'),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '${currentReviewChangeIndex + 1} / ${_allPendingChanges.length}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
+                            // Left side: Navigation controls with fixed width
+                            SizedBox(
+                              width: 320,
+                              child: Row(
+                                children: [
+                                  ElevatedButton.icon(
+                                    onPressed: currentReviewChangeIndex > 0
+                                        ? () {
+                                            setState(() {
+                                              currentReviewChangeIndex--;
+                                              selectedReviewChapter =
+                                                  _allPendingChanges[currentReviewChangeIndex]
+                                                      .key;
+                                            });
+                                          }
+                                        : null,
+                                    icon: const Icon(Icons.arrow_back),
+                                    label: const Text('Previous'),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // Fixed width for counter to prevent shifting
+                                  SizedBox(
+                                    width: 70,
+                                    child: Text(
+                                      '${currentReviewChangeIndex + 1} / ${_allPendingChanges.length}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton.icon(
+                                    onPressed:
+                                        currentReviewChangeIndex <
+                                            _allPendingChanges.length - 1
+                                        ? () {
+                                            setState(() {
+                                              currentReviewChangeIndex++;
+                                              selectedReviewChapter =
+                                                  _allPendingChanges[currentReviewChangeIndex]
+                                                      .key;
+                                            });
+                                          }
+                                        : null,
+                                    icon: const Icon(Icons.arrow_forward),
+                                    label: const Text('Next'),
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed:
-                                  currentReviewChangeIndex <
-                                      _allPendingChanges.length - 1
-                                  ? () {
-                                      setState(() {
-                                        currentReviewChangeIndex++;
-                                        selectedReviewChapter =
-                                            _allPendingChanges[currentReviewChangeIndex]
-                                                .key;
-                                      });
-                                    }
-                                  : null,
-                              icon: const Icon(Icons.arrow_forward),
-                              label: const Text('Next'),
-                            ),
-                            const Spacer(),
-                            ElevatedButton.icon(
-                              onPressed: () => _rejectChange(
-                                _allPendingChanges[currentReviewChangeIndex]
-                                    .value,
-                              ),
-                              icon: const Icon(Icons.close),
-                              label: const Text('Reject'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.red,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed: () => _acceptChange(
-                                _allPendingChanges[currentReviewChangeIndex]
-                                    .value,
-                              ),
-                              icon: const Icon(Icons.check),
-                              label: const Text('Accept'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                              ),
+                            // Right side: Action buttons - always at same position
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ElevatedButton.icon(
+                                  onPressed: () => _rejectChange(
+                                    _allPendingChanges[currentReviewChangeIndex]
+                                        .value,
+                                  ),
+                                  icon: const Icon(Icons.close, size: 18),
+                                  label: const Text('Reject'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFD32F2F),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: () => _acceptChange(
+                                    _allPendingChanges[currentReviewChangeIndex]
+                                        .value,
+                                  ),
+                                  icon: const Icon(Icons.check, size: 18),
+                                  label: const Text('Accept'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF388E3C),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: _acceptAllChanges,
+                                  icon: const Icon(Icons.done_all, size: 18),
+                                  label: const Text('Accept All'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF1976D2),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -1642,13 +1831,17 @@ class _BookWashHomeState extends State<BookWashHome> {
             // Export EPUB Button - shows after processing
             if (bookwashFile != null && !isProcessing) ...[
               const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: _exportToEpub,
-                icon: const Icon(Icons.download),
-                label: const Text('Export EPUB'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: Colors.teal,
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _exportToEpub,
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('Export EPUB'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    backgroundColor: const Color(0xFF00897B),
+                    foregroundColor: Colors.white,
+                  ),
                 ),
               ),
             ],
@@ -1656,6 +1849,109 @@ class _BookWashHomeState extends State<BookWashHome> {
         ),
       ),
     );
+  }
+
+  // Helper method for cleaning phase segment in progress bar
+  Widget _buildCleaningPhaseSegment(
+    String label,
+    bool isActive,
+    bool isComplete,
+    Color color,
+  ) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        decoration: BoxDecoration(
+          color: isActive
+              ? color.withOpacity(0.3)
+              : isComplete
+              ? color.withOpacity(0.15)
+              : Colors.grey.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: isActive ? color : Colors.grey.withOpacity(0.3),
+            width: isActive ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (isComplete) ...[
+              Icon(Icons.check_circle, size: 12, color: color),
+              const SizedBox(width: 4),
+            ] else if (isActive) ...[
+              SizedBox(
+                width: 10,
+                height: 10,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                color: isActive || isComplete ? color : Colors.grey,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Helper method to get cleaning sub-phase color
+  Color _getCleaningSubPhaseColor() {
+    switch (cleaningSubPhase) {
+      case 'language':
+        return Colors.purple;
+      case 'adult':
+        return Colors.pink;
+      case 'violence':
+        return Colors.red;
+      case 'identifying':
+        return Colors.orange;
+      case 'verifying':
+        return Colors.teal;
+      default:
+        return Colors.orange;
+    }
+  }
+
+  // Helper method to get progress status text
+  String _getProgressStatusText() {
+    if (progressPhase == 'converting') {
+      return '📝 Converting...';
+    } else if (progressPhase == 'rating') {
+      return '📊 Rating${progressTotal > 0 ? ' $progressCurrent/$progressTotal chapters' : '...'}';
+    } else if (progressPhase == 'cleaning') {
+      String subPhaseLabel = '';
+      switch (cleaningSubPhase) {
+        case 'identifying':
+          subPhaseLabel = '🔍 Identifying content';
+          break;
+        case 'language':
+          subPhaseLabel = '💬 Language cleaning';
+          break;
+        case 'adult':
+          subPhaseLabel = '🔞 Adult content cleaning';
+          break;
+        case 'violence':
+          subPhaseLabel = '⚔️ Violence cleaning';
+          break;
+        case 'verifying':
+          subPhaseLabel = '✅ Verifying cleaned content';
+          break;
+        default:
+          subPhaseLabel = '🧹 Cleaning';
+      }
+      return '$subPhaseLabel${progressTotal > 0 ? ' ($progressCurrent/$progressTotal)' : '...'}';
+    }
+    return progressPhase;
   }
 
   Widget _buildReviewStatChip(String label, int count, Color color) {
@@ -1689,47 +1985,28 @@ class _BookWashHomeState extends State<BookWashHome> {
 
     return Container(
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade700),
+        border: Border.all(color: Colors.grey.shade700, width: 1),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Label to identify this is the active comparison UI
+          // Chapter header
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.blue.shade900,
+              color: const Color(0xFF2C2C2C),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(7),
                 topRight: Radius.circular(7),
               ),
             ),
-            child: const Row(
-              children: [
-                Icon(Icons.edit, size: 16, color: Colors.blue),
-                SizedBox(width: 8),
-                Text(
-                  '▶ ACTIVE COMPARISON (Step 4 Review)',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Chapter header
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.grey.shade800),
             child: Row(
               children: [
                 const Icon(Icons.book, size: 16),
                 const SizedBox(width: 8),
                 Text(
-                  'Chapter ${chapterIndex + 1}: ${chapter.title}',
+                  'Chapter ${chapter.number}: ${chapter.title}',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: 8),
@@ -1754,11 +2031,12 @@ class _BookWashHomeState extends State<BookWashHome> {
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.1),
+                          color: const Color(0xFFFFEBEE),
                           border: Border.all(
-                            color: Colors.red.withOpacity(0.3),
+                            color: const Color(0xFFE57373),
+                            width: 1.5,
                           ),
-                          borderRadius: BorderRadius.circular(4),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1767,7 +2045,7 @@ class _BookWashHomeState extends State<BookWashHome> {
                               'Original (Red = Removed)',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: Colors.red,
+                                color: Color(0xFFC62828),
                                 fontSize: 12,
                               ),
                             ),
@@ -1791,11 +2069,12 @@ class _BookWashHomeState extends State<BookWashHome> {
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.1),
+                          color: const Color(0xFFE8F5E9),
                           border: Border.all(
-                            color: Colors.green.withOpacity(0.3),
+                            color: const Color(0xFF66BB6A),
+                            width: 1.5,
                           ),
-                          borderRadius: BorderRadius.circular(4),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1804,7 +2083,7 @@ class _BookWashHomeState extends State<BookWashHome> {
                               'Cleaned (Green = Added/Modified)',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: Colors.green,
+                                color: Color(0xFF2E7D32),
                                 fontSize: 12,
                               ),
                             ),
@@ -1907,11 +2186,23 @@ class _BookWashHomeState extends State<BookWashHome> {
           'jesus christ',
           'oh my god',
         ], Colors.purple),
+        const SizedBox(height: 12),
+        _buildWordGroup(
+          'Racial Slurs',
+          ['racial slurs'],
+          Colors.brown,
+          isMetaOption: true,
+        ),
       ],
     );
   }
 
-  Widget _buildWordGroup(String label, List<String> displayWords, Color color) {
+  Widget _buildWordGroup(
+    String label,
+    List<String> displayWords,
+    Color color, {
+    bool isMetaOption = false,
+  }) {
     // Map display words to actual keys
     final Map<String, String> wordKeyMap = {
       'sh*t': 'shit',
@@ -1982,32 +2273,61 @@ class _BookWashHomeState extends State<BookWashHome> {
           ],
         ),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 4,
-          children: displayWords.map((displayWord) {
-            final actualKey = wordKeyMap[displayWord] ?? displayWord;
-            return SizedBox(
-              width: 140,
-              child: CheckboxListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                visualDensity: VisualDensity.compact,
-                title: Text(displayWord, style: const TextStyle(fontSize: 13)),
-                value: languageWordSelection[actualKey] ?? false,
-                onChanged: isProcessing
-                    ? null
-                    : (bool? value) {
-                        setState(() {
-                          languageWordSelection[actualKey] = value ?? false;
-                        });
-                        _saveLanguageWords();
-                      },
-                controlAffinity: ListTileControlAffinity.leading,
-              ),
-            );
-          }).toList(),
-        ),
+        if (isMetaOption)
+          // Single checkbox for meta options like "racial slurs"
+          CheckboxListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+            visualDensity: VisualDensity.compact,
+            title: Text(
+              'Remove all racial slurs and epithets',
+              style: TextStyle(fontSize: 13, color: color),
+            ),
+            subtitle: const Text(
+              'Instructs the AI to identify and replace racial slurs with appropriate alternatives',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+            value: languageWordSelection['racial slurs'] ?? false,
+            onChanged: isProcessing
+                ? null
+                : (bool? value) {
+                    setState(() {
+                      languageWordSelection['racial slurs'] = value ?? false;
+                    });
+                    _saveLanguageWords();
+                  },
+            controlAffinity: ListTileControlAffinity.leading,
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: displayWords.map((displayWord) {
+              final actualKey = wordKeyMap[displayWord] ?? displayWord;
+              return SizedBox(
+                width: 140,
+                child: CheckboxListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  visualDensity: VisualDensity.compact,
+                  title: Text(
+                    displayWord,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  value: languageWordSelection[actualKey] ?? false,
+                  onChanged: isProcessing
+                      ? null
+                      : (bool? value) {
+                          setState(() {
+                            languageWordSelection[actualKey] = value ?? false;
+                          });
+                          _saveLanguageWords();
+                        },
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+              );
+            }).toList(),
+          ),
       ],
     );
   }
