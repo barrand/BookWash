@@ -61,9 +61,15 @@ class HTMLTextExtractor(HTMLParser):
         self.in_h1 = False
         self.h1_text = []
         self.current_heading = None  # Track which heading we're in
+        self.current_href_dir = ''  # Base directory for resolving relative image paths
+    
+    def set_href_dir(self, href_dir: str):
+        """Set the base directory for resolving relative image paths."""
+        self.current_href_dir = href_dir
     
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
+        attrs_dict = dict(attrs)
         
         if tag in self.skip_tags:
             self.skip_depth += 1
@@ -78,6 +84,16 @@ class HTMLTextExtractor(HTMLParser):
         if tag == 'h1':
             self.in_h1 = True
             self.h1_text = []
+        
+        # Handle images - preserve as [IMG: filename] marker
+        if tag == 'img' and self.in_body:
+            src = attrs_dict.get('src', '')
+            if src:
+                # Get just the filename from the path
+                from pathlib import Path
+                img_filename = Path(src).name
+                # Add as inline marker (will be its own paragraph if block-level)
+                self.current_text.append(f'[IMG: {img_filename}]')
         
         # Add inline formatting markers
         if tag in self.inline_format_tags and self.in_body:
