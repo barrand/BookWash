@@ -45,6 +45,10 @@ PHRASE_REPLACEMENTS: List[Tuple[str, str]] = [
     
     # "go to hell" / dismissals
     ("go to hell", "go away"),
+    ("burn in hell", "get lost"),
+    ("damn you", "curse you"),
+    ("damn them", "curse them"),
+    ("damn it", "curses"),
     ("fuck off", "get lost"),
     ("fuck you", "forget you"),
     ("screw you", "forget you"),
@@ -57,6 +61,7 @@ PHRASE_REPLACEMENTS: List[Tuple[str, str]] = [
     ("for fuck's sake", "for goodness' sake"),
     ("for fuck sake", "for goodness' sake"),
     ("for god's sake", "for goodness' sake"),
+    ("god's sake", "goodness' sake"),
     ("for christ's sake", "for goodness' sake"),
     
     # State descriptions
@@ -179,6 +184,8 @@ WORD_REPLACEMENTS: List[Tuple[str, str]] = [
     ("lardass", "fatty"),
     
     # Damn family (standalone "damn" could be religious condemnation)
+    ("damn", "darn"),
+    ("damned", "darned"),
     ("goddamn", "cursed"),
     ("goddamned", "cursed"),
     ("goddamnit", "curses"),

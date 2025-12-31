@@ -761,7 +761,6 @@ class _BookWashHomeState extends State<BookWashHome> {
 
     // Use full path to python3 to avoid xcrun issues in sandbox
     final python3Path = '/usr/bin/python3';
-
     try {
       final process = await Process.start(
         python3Path,
@@ -900,6 +899,56 @@ class _BookWashHomeState extends State<BookWashHome> {
     _addLogMessage(
       '✅ Accepted all ${_allPendingChanges.length} pending changes',
     );
+  }
+
+  void _acceptAllLanguageChanges() {
+    int acceptedCount = 0;
+    setState(() {
+      for (final entry in _allPendingChanges) {
+        final change = entry.value;
+        // Check if this is a language change by looking for common profanity replacements
+        if (_isLanguageChange(change)) {
+          change.status = 'accepted';
+          acceptedCount++;
+        }
+      }
+    });
+    _addLogMessage('✅ Accepted $acceptedCount language changes');
+  }
+
+  bool _isLanguageChange(BookWashChange change) {
+    // Check if the change is primarily language-related by looking for common
+    // profanity replacements in the diff between original and cleaned
+    final original = change.original.toLowerCase();
+    final cleaned = change.cleaned.toLowerCase();
+
+    // Common language replacements - if cleaned has these alternatives, it's likely language
+    final languageReplacements = [
+      'darn',
+      'dang',
+      'heck',
+      'gosh',
+      'fudge',
+      'shoot',
+      'crap',
+      'jerk',
+      'idiot',
+      'fool',
+      'moron',
+      'butt',
+      'rear',
+      'behind',
+      'curses',
+      'blast',
+      'confound',
+    ];
+
+    for (final replacement in languageReplacements) {
+      if (cleaned.contains(replacement) && !original.contains(replacement)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void _rejectChange(BookWashChange change) {
@@ -1752,31 +1801,11 @@ class _BookWashHomeState extends State<BookWashHome> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 ElevatedButton.icon(
-                                  onPressed: () => _rejectChange(
-                                    _allPendingChanges[currentReviewChangeIndex]
-                                        .value,
-                                  ),
-                                  icon: const Icon(Icons.close, size: 18),
-                                  label: const Text('Reject'),
+                                  onPressed: _acceptAllLanguageChanges,
+                                  icon: const Icon(Icons.translate, size: 18),
+                                  label: const Text('Accept All Language'),
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFFD32F2F),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 12,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                ElevatedButton.icon(
-                                  onPressed: () => _acceptChange(
-                                    _allPendingChanges[currentReviewChangeIndex]
-                                        .value,
-                                  ),
-                                  icon: const Icon(Icons.check, size: 18),
-                                  label: const Text('Accept'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF388E3C),
+                                    backgroundColor: const Color(0xFF7B1FA2),
                                     foregroundColor: Colors.white,
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 16,
@@ -2028,77 +2057,133 @@ class _BookWashHomeState extends State<BookWashHome> {
                   children: [
                     // Original with word-level highlighting
                     Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFEBEE),
-                          border: Border.all(
-                            color: const Color(0xFFE57373),
-                            width: 1.5,
-                          ),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Original (Red = Removed)',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFFC62828),
-                                fontSize: 12,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Keep Orig button above Original panel
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: () => _rejectChange(
+                                _allPendingChanges[currentReviewChangeIndex]
+                                    .value,
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Container(
-                              constraints: const BoxConstraints(maxHeight: 150),
-                              child: SingleChildScrollView(
-                                child: _buildOriginalHighlight(
-                                  change.original,
-                                  change.cleaned,
+                              icon: const Icon(Icons.close, size: 18),
+                              label: const Text('Keep Orig'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFD32F2F),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
                                 ),
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFEBEE),
+                              border: Border.all(
+                                color: const Color(0xFFE57373),
+                                width: 1.5,
+                              ),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Original (Red = Removed)',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFFC62828),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 150,
+                                  ),
+                                  child: SingleChildScrollView(
+                                    child: _buildOriginalHighlight(
+                                      change.original,
+                                      change.cleaned,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 12),
                     // Cleaned with word-level highlighting and editable field
                     Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE8F5E9),
-                          border: Border.all(
-                            color: const Color(0xFF66BB6A),
-                            width: 1.5,
-                          ),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Cleaned (Green = Added/Modified)',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF2E7D32),
-                                fontSize: 12,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Keep Cleaned button above Cleaned panel
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: () => _acceptChange(
+                                _allPendingChanges[currentReviewChangeIndex]
+                                    .value,
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Container(
-                              constraints: const BoxConstraints(maxHeight: 150),
-                              child: SingleChildScrollView(
-                                child: _buildCleanedHighlight(
-                                  change.original,
-                                  change.cleaned,
+                              icon: const Icon(Icons.check, size: 18),
+                              label: const Text('Keep Cleaned'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF388E3C),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
                                 ),
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE8F5E9),
+                              border: Border.all(
+                                color: const Color(0xFF66BB6A),
+                                width: 1.5,
+                              ),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Cleaned (Green = Added/Modified)',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF2E7D32),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 150,
+                                  ),
+                                  child: SingleChildScrollView(
+                                    child: _buildCleanedHighlight(
+                                      change.original,
+                                      change.cleaned,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
