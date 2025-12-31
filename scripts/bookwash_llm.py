@@ -1240,7 +1240,7 @@ CRITICAL RULES:
 3. NEVER use [REDACTED], [REMOVED], [CENSORED], or any bracketed placeholder - ALWAYS replace with actual substitute words or remove the content entirely
 4. Preserve ALL whitespace EXACTLY - same line breaks, same paragraph breaks. If the original has a line break mid-sentence, keep it there.
 5. Keep formatting, punctuation, and quotation marks intact
-6. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup tags exactly as they appear. Only clean the text inside, not the markers themselves.
+6. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup tags exactly as they appear. Only clean the text inside, not the markers themselves. NEVER ADD formatting tags that weren't in the original - if the original word has no [B] or [I] tags, the replacement must not have them either.
 7. CHAPTER TITLES: The first line may be a chapter title. If it contains profanity, CLEAN it but keep it as a short title (not a paragraph). Example: "The Sh*t Show" → "The Disaster"
 8. DO NOT simplify vocabulary - keep sophisticated words (onerous, nascent, snarled, etc). Only remove inappropriate CONTENT, not complex language.
 9. Narrative descriptions of profanity are ALLOWED at all language levels:
@@ -1334,7 +1334,11 @@ CRITICAL INSTRUCTIONS:
 KEEP all other words not in the removal list or similar severity.
 
 ⚠️ EXCEPTION - LEGITIMATE/PROPER USES (do NOT remove these):
-- "bastard" meaning illegitimate child → KEEP "born a bastard", "the king's bastard son", "his bastard", "[name]'s bastard", "fathered a bastard", "the bastard" (when referring to illegitimate birth)
+- "bastard" meaning illegitimate child → NEVER REPLACE when referring to illegitimate birth status:
+  • "born a bastard", "the king's bastard", "his bastard", "[name]'s bastard", "fathered a bastard"
+  • "I'm a bastard", "I'm his bastard", "You're a bastard" (when discussing parentage)
+  • "the bastard son", "a bastard child", "Gavin's bastard", "Kip was Gavin's bastard"
+  • Context clue: if discussing parentage, lineage, birth status, or social shame of illegitimacy → KEEP
 - "bitch" meaning female dog → KEEP "the bitch and her puppies", "a hunting bitch"
 - "ass" meaning donkey → KEEP "rode an ass", "stubborn as an ass"
 - "damn" meaning to condemn → KEEP "damn his soul", "damned to hell" (religious condemnation) or as a physical construction for blocking water
@@ -1754,7 +1758,11 @@ def build_chapter_rating_prompt(language_words: list = None) -> str:
    - Include similar severity: if 'bitch' is listed, also detect 'slut', 'son of a bitch'
    
    ⚠️ EXCEPTION - LEGITIMATE/PROPER USES (do NOT flag these):
-   - "bastard" meaning illegitimate child (e.g., "born a bastard", "the king's bastard son", "his bastard", "[name]'s bastard", "fathered a bastard", "the bastard" when referring to illegitimate birth)
+   - "bastard" meaning illegitimate child - NEVER FLAG when referring to illegitimate birth:
+     • "born a bastard", "the king's bastard", "his bastard", "[name]'s bastard", "fathered a bastard"
+     • "I'm a bastard", "I'm his bastard", "You're a bastard" (when discussing parentage)
+     • "the bastard son", "a bastard child", "Gavin's bastard", "Kip was Gavin's bastard"
+     • Context clue: if discussing parentage, lineage, birth status, or social shame of illegitimacy → DO NOT FLAG
    - "bitch" meaning female dog (e.g., "the bitch and her puppies", "a hunting bitch")
    - "ass" meaning donkey (e.g., "rode an ass", "stubborn as an ass")
    - "damn" meaning to condemn (e.g., "damn his soul", "damned to hell" in religious context), or physical construction for retaining water (e.g., "the damn held back the river")
@@ -1981,7 +1989,7 @@ def build_language_cleaning_prompt(language_words: list) -> str:
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions. If a line break occurs mid-sentence, keep it there.
 3. DO NOT change anything else - keep all other content identical
 4. Narrative descriptions like "he cursed" or "she swore" are ALLOWED - only remove actual offensive words
-5. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup tags exactly as they appear. Only clean the text inside, not the markers themselves.
+5. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup tags exactly as they appear. Only clean the text inside, not the markers themselves. NEVER ADD formatting tags that weren't in the original - if the original word has no [B] or [I] tags, the replacement must not have them either.
 
 SENTENCE REPAIR (VERY IMPORTANT):
 - NEVER leave a sentence starting with just "It," or "This," - that is broken grammar
@@ -2038,7 +2046,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
+3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
 4. When uncertain, remove it
 
 Text to clean:
@@ -2074,7 +2082,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
+3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
 4. When uncertain, remove it
 
 Text to clean:
@@ -2112,7 +2120,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
+3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
 4. Preserve emotional intensity while removing explicit content
 
 Text to clean:
@@ -2162,7 +2170,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
+3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
 4. When uncertain, remove it
 
 Text to clean:
@@ -2199,7 +2207,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
+3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
 4. Keep action and tension, remove graphic results
 
 Text to clean:
@@ -2236,7 +2244,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
+3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
 4. Preserve intensity, reduce graphic detail
 
 Text to clean:
