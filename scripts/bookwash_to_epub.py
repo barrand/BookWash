@@ -61,6 +61,8 @@ class BookwashFile:
     author: str
     language: str
     source_epub: str
+    assets_folder: str = ""  # Folder containing images
+    cover_image: str = ""    # Cover image filename
     chapters: list = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
 
@@ -74,7 +76,9 @@ def parse_bookwash(filepath: str) -> BookwashFile:
         title="",
         author="",
         language="",
-        source_epub=""
+        source_epub="",
+        assets_folder="",
+        cover_image=""
     )
     
     # Parse header metadata
@@ -97,6 +101,16 @@ def parse_bookwash(filepath: str) -> BookwashFile:
         source_match = re.search(r'#SOURCE:\s*(.+)', header)
         if source_match:
             book.source_epub = source_match.group(1).strip()
+        
+        # Parse assets folder path
+        assets_match = re.search(r'#ASSETS:\s*(.+)', header)
+        if assets_match:
+            book.assets_folder = assets_match.group(1).strip()
+        
+        # Parse cover image filename
+        cover_match = re.search(r'#IMAGE:\s*(.+)', header)
+        if cover_match:
+            book.cover_image = cover_match.group(1).strip()
         
         # If no title found, derive from source filename
         if not book.title and book.source_epub:
@@ -338,6 +352,14 @@ def convert_format_markers_to_html(text: str) -> str:
     for marker, html_tag in replacements:
         result = result.replace(marker, html_tag)
     
+    # Convert [IMG: filename] markers to <img> tags
+    import re
+    result = re.sub(
+        r'\[IMG:\s*([^\]]+)\]',
+        r'<img src="images/\1" alt="" style="max-width:100%;"/>',
+        result
+    )
+    
     return result
 
 
@@ -362,6 +384,8 @@ def text_to_xhtml(text: str, title: str) -> str:
     xhtml_parts.append('    h1, h2, h3, h4, h5, h6 { text-align: center; margin-top: 1.5em; margin-bottom: 1em; }')
     xhtml_parts.append('    p { text-indent: 1.5em; margin: 0.5em 0; }')
     xhtml_parts.append('    p.first { text-indent: 0; }')
+    xhtml_parts.append('    p.image { text-indent: 0; text-align: center; margin: 1em 0; }')
+    xhtml_parts.append('    img { max-width: 100%; height: auto; }')
     xhtml_parts.append('    blockquote { margin: 1em 2em; font-style: italic; }')
     xhtml_parts.append('  </style>')
     xhtml_parts.append('</head>')
@@ -412,6 +436,9 @@ def text_to_xhtml(text: str, title: str) -> str:
             xhtml_parts.append(f'  {para_html}')
             first_content_para = True  # Reset after heading
         else:
+            # Check if this is an image-only paragraph
+            is_image_para = para.strip().startswith('[IMG:') and para.strip().endswith(']')
+            
             # Regular paragraph - wrap in <p> and convert inline markers
             # First escape special HTML chars in the text
             para_escaped = html_escape(para)
@@ -419,7 +446,13 @@ def text_to_xhtml(text: str, title: str) -> str:
             para_html = convert_format_markers_to_html(para_escaped)
             # Handle single newlines as line breaks
             para_html = para_html.replace('\n', '<br/>\n')
-            css_class = ' class="first"' if first_content_para else ''
+            
+            if is_image_para:
+                css_class = ' class="image"'
+            elif first_content_para:
+                css_class = ' class="first"'
+            else:
+                css_class = ''
             xhtml_parts.append(f'  <p{css_class}>{para_html}</p>')
             first_content_para = False
     
@@ -472,7 +505,8 @@ def get_display_title(chapter: Chapter, mode: str) -> str:
     return title
 
 
-def create_epub(book: BookwashFile, output_path: str, mode: str, verbose: bool = False):
+def create_epub(book: BookwashFile, output_path: str, mode: str, 
+                input_path: str = "", verbose: bool = False):
     """Create an EPUB file from the processed bookwash data."""
     
     # Create temp directory for EPUB structure
@@ -482,6 +516,47 @@ def create_epub(book: BookwashFile, output_path: str, mode: str, verbose: bool =
         # EPUB structure
         os.makedirs(os.path.join(temp_dir, 'META-INF'))
         os.makedirs(os.path.join(temp_dir, 'OEBPS'))
+        os.makedirs(os.path.join(temp_dir, 'OEBPS', 'images'))
+        
+        # Copy images from assets folder
+        image_files = []  # List of (filename, media_type)
+        if book.assets_folder and input_path:
+            input_dir = os.path.dirname(os.path.abspath(input_path))
+            assets_path = os.path.join(input_dir, book.assets_folder)
+            
+            if os.path.isdir(assets_path):
+                for filename in os.listdir(assets_path):
+                    file_lower = filename.lower()
+                    if file_lower.endswith(('.jpg', '.jpeg', '.png', '.gif', '.svg')):
+                        src = os.path.join(assets_path, filename)
+                        dst = os.path.join(temp_dir, 'OEBPS', 'images', filename)
+                        shutil.copy2(src, dst)
+                        
+                        # Determine media type
+                        if file_lower.endswith('.jpg') or file_lower.endswith('.jpeg'):
+                            media_type = 'image/jpeg'
+                        elif file_lower.endswith('.png'):
+                            media_type = 'image/png'
+                        elif file_lower.endswith('.gif'):
+                            media_type = 'image/gif'
+                        elif file_lower.endswith('.svg'):
+                            media_type = 'image/svg+xml'
+                        else:
+                            media_type = 'application/octet-stream'
+                        
+                        image_files.append((filename, media_type))
+                        
+                        # Auto-detect cover image if not explicitly set
+                        if not book.cover_image and file_lower.startswith('cover'):
+                            book.cover_image = filename
+                            if verbose:
+                                print(f"  Auto-detected cover: {filename}")
+                        
+                        if verbose:
+                            print(f"  Copied image: {filename}")
+            else:
+                if verbose:
+                    print(f"  Warning: Assets folder not found: {assets_path}")
         
         # 1. Create mimetype file (must be first, uncompressed)
         with open(os.path.join(temp_dir, 'mimetype'), 'w') as f:
@@ -557,6 +632,43 @@ def create_epub(book: BookwashFile, output_path: str, mode: str, verbose: bool =
         
         manifest_items.append('    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>')
         
+        # Add image manifest items
+        cover_id = None
+        for filename, media_type in image_files:
+            # Create safe id from filename
+            img_id = 'img_' + re.sub(r'[^a-zA-Z0-9]', '_', filename)
+            # Check if this is the cover image
+            is_cover = (book.cover_image and filename == book.cover_image)
+            if is_cover:
+                cover_id = img_id
+                manifest_items.append(f'    <item id="{img_id}" href="images/{filename}" media-type="{media_type}" properties="cover-image"/>')
+            else:
+                manifest_items.append(f'    <item id="{img_id}" href="images/{filename}" media-type="{media_type}"/>')
+        
+        # Create cover page if we have a cover image
+        if cover_id and book.cover_image:
+            cover_xhtml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head>
+  <title>Cover</title>
+  <meta charset="UTF-8"/>
+  <style type="text/css">
+    body {{ margin: 0; padding: 0; text-align: center; }}
+    img {{ max-width: 100%; max-height: 100%; }}
+  </style>
+</head>
+<body>
+  <img src="images/{html_escape(book.cover_image)}" alt="Cover"/>
+</body>
+</html>'''
+            with open(os.path.join(temp_dir, 'OEBPS', 'cover.xhtml'), 'w', encoding='utf-8') as f:
+                f.write(cover_xhtml)
+            
+            # Add cover page to manifest and spine (at the beginning)
+            manifest_items.insert(0, '    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>')
+            spine_items.insert(0, '    <itemref idref="cover"/>')
+        
         # 5. Create content.opf (package document)
         manifest_str = '\n'.join(manifest_items)
         spine_str = '\n'.join(spine_items)
@@ -565,6 +677,11 @@ def create_epub(book: BookwashFile, output_path: str, mode: str, verbose: bool =
         import hashlib
         book_id = hashlib.md5(f"{book.title}{book.author}".encode()).hexdigest()[:16]
         
+        # Build cover metadata for EPUB2 compatibility (Apple Books uses this)
+        cover_meta = ""
+        if cover_id:
+            cover_meta = f'\n    <meta name="cover" content="{cover_id}"/>'
+        
         content_opf = f'''<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -572,7 +689,7 @@ def create_epub(book: BookwashFile, output_path: str, mode: str, verbose: bool =
     <dc:title>{html_escape(book.title)}</dc:title>
     <dc:creator>{html_escape(book.author)}</dc:creator>
     <dc:language>{book.language or 'en'}</dc:language>
-    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>{cover_meta}
   </metadata>
   <manifest>
 {manifest_str}
@@ -689,7 +806,7 @@ def main():
         print()
     
     # Create the EPUB
-    create_epub(book, output_path, mode, verbose=args.verbose)
+    create_epub(book, output_path, mode, input_path=args.input, verbose=args.verbose)
     
     print()
     print(f"✓ EPUB created successfully: {output_path}")

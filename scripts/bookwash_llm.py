@@ -1240,7 +1240,14 @@ CRITICAL RULES:
 3. NEVER use [REDACTED], [REMOVED], [CENSORED], or any bracketed placeholder - ALWAYS replace with actual substitute words or remove the content entirely
 4. Preserve ALL whitespace EXACTLY - same line breaks, same paragraph breaks. If the original has a line break mid-sentence, keep it there.
 5. Keep formatting, punctuation, and quotation marks intact
-6. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup tags exactly as they appear. Only clean the text inside, not the markers themselves. NEVER ADD formatting tags that weren't in the original - if the original word has no [B] or [I] tags, the replacement must not have them either.
+
+⚠️ FORMATTING TAGS - CRITICAL ⚠️
+6. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
+   - If the original word has NO tags around it, the replacement must have NO tags
+   - WRONG: "hell" → "[B]heck[/B]" (added tags that weren't there!)
+   - CORRECT: "hell" → "heck" (no tags added)
+   - Only PRESERVE existing tags: "[I]damn[/I]" → "[I]darn[/I]" (kept existing tags)
+
 7. CHAPTER TITLES: The first line may be a chapter title. If it contains profanity, CLEAN it but keep it as a short title (not a paragraph). Example: "The Sh*t Show" → "The Disaster"
 8. DO NOT simplify vocabulary - keep sophisticated words (onerous, nascent, snarled, etc). Only remove inappropriate CONTENT, not complex language.
 9. Narrative descriptions of profanity are ALLOWED at all language levels:
@@ -1473,6 +1480,8 @@ VIOLENCE FILTERING (Target: {violence_name}):"""
 - NO FILTERING - keep all violence as-is"""
         
         prompt += """
+
+FINAL REMINDER: Do NOT add [B], [I], or any formatting tags. Only keep tags that already exist in the original.
 
 Now filter the following text according to these rules. Return ONLY the cleaned text:
 
@@ -1989,7 +1998,15 @@ def build_language_cleaning_prompt(language_words: list) -> str:
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions. If a line break occurs mid-sentence, keep it there.
 3. DO NOT change anything else - keep all other content identical
 4. Narrative descriptions like "he cursed" or "she swore" are ALLOWED - only remove actual offensive words
-5. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup tags exactly as they appear. Only clean the text inside, not the markers themselves. NEVER ADD formatting tags that weren't in the original - if the original word has no [B] or [I] tags, the replacement must not have them either.
+
+⚠️ FORMATTING TAGS - CRITICAL ⚠️
+5. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
+   - If the original word has NO tags around it, the replacement must have NO tags
+   - WRONG: "hell" → "[B]heck[/B]" (added tags that weren't there!)
+   - CORRECT: "hell" → "heck" (no tags added)
+   - WRONG: "son of a bitch" → "[B]scoundrel[/B]" (added tags!)
+   - CORRECT: "son of a bitch" → "scoundrel" (no tags)
+   - Only PRESERVE existing tags: "[I]damn[/I]" → "[I]darn[/I]" (kept existing tags)
 
 SENTENCE REPAIR (VERY IMPORTANT):
 - NEVER leave a sentence starting with just "It," or "This," - that is broken grammar
@@ -2046,7 +2063,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
 4. When uncertain, remove it
 
 Text to clean:
@@ -2082,7 +2099,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
 4. When uncertain, remove it
 
 Text to clean:
@@ -2120,7 +2137,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
 4. Preserve emotional intensity while removing explicit content
 
 Text to clean:
@@ -2170,7 +2187,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
 4. When uncertain, remove it
 
 Text to clean:
@@ -2207,7 +2224,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
 4. Keep action and tension, remove graphic results
 
 Text to clean:
@@ -2244,7 +2261,7 @@ CLEANING APPROACH:
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear. NEVER ADD formatting tags that weren't in the original.
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
 4. Preserve intensity, reduce graphic detail
 
 Text to clean:
