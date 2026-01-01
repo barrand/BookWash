@@ -6,19 +6,12 @@
 ✅ Requirements and testing framework documented
 
 ## Next Steps
-- try paragraph size to be 16 instead of 8
-- Check the content order, something out of order.
-- I don't think the cover image is getting put back together correctly
-- strip out the #PENDING_CLEANING = false flag
-![alt text](image.png)
-- add "accept all language" button
+- the request to not filter on violence isn't working, it is still trying to correct violence
 - If we verify the chapters meet rating scale, is it using language MPAA or something else? Also what if we fail the verify? I don't think this is working
-- make the accept button in the same spot every time so I can tap it quuickly
 - Can we make the reviews go in the right order? Right now chapter 16 is before chapter 5
 - I don't have an idea of how many total paragraphs there are to review. I'd like to see an overall percent
-- What do I do about ones that slip through the cracks? See screenshot
 - make the right side editable again
-- Make the UI a bit more fun, with Emojis, fun language, images?
+- Make the UI a bit more fun, add Icon to the header, with Emojis, fun language, images?
 - Make it so it handles if the user starts a book and then comes back
 - Update the github readme with more details on what works and doesn't
 - Test thoroughly with various EPUB structures
@@ -27,5 +20,8 @@
 - Post to a few places like Linkedin
 
 ## DONE
-- Regex prefilter for unambiguous profanity (shit→crud, fucking→freaking, etc.) - new file: scripts/language_prefilter.py
+- Regex prefilter for unambiguous profanity (sh*t→crud,  etc.) - new file: scripts/language_prefilter.py
 - Try and rename the chapters based on the actual book chapters
+- make the accept button in the same spot every time so I can tap it quuickly
+-I don't think the cover image is getting put back together correctly
+- the update progress steps are not highlighting

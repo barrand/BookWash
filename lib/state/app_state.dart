@@ -389,45 +389,14 @@ class AppState extends ChangeNotifier {
     int acceptedCount = 0;
     for (final entry in allPendingChanges) {
       final change = entry.value;
-      if (_isLanguageChange(change)) {
+      // Check if this change has the language cleaning marker
+      if (change.reason.contains('language')) {
         change.status = 'accepted';
         acceptedCount++;
       }
     }
     addLogMessage('✅ Accepted $acceptedCount language changes');
     notifyListeners();
-  }
-
-  bool _isLanguageChange(BookWashChange change) {
-    final original = change.original.toLowerCase();
-    final cleaned = change.cleaned.toLowerCase();
-
-    final languageReplacements = [
-      'darn',
-      'dang',
-      'heck',
-      'gosh',
-      'fudge',
-      'shoot',
-      'crap',
-      'jerk',
-      'idiot',
-      'fool',
-      'moron',
-      'butt',
-      'rear',
-      'behind',
-      'curses',
-      'blast',
-      'confound',
-    ];
-
-    for (final replacement in languageReplacements) {
-      if (cleaned.contains(replacement) && !original.contains(replacement)) {
-        return true;
-      }
-    }
-    return false;
   }
 
   void rejectChange(BookWashChange change) {
@@ -438,13 +407,17 @@ class AppState extends ChangeNotifier {
 
   void _moveToNextChange() {
     final pending = allPendingChanges;
-    if (currentReviewChangeIndex < pending.length - 1) {
-      currentReviewChangeIndex++;
-      selectedReviewChapter = pending[currentReviewChangeIndex].key;
-    } else if (pending.isNotEmpty) {
-      currentReviewChangeIndex = 0;
-      selectedReviewChapter = pending[0].key;
+    if (pending.isEmpty) {
+      // No more pending changes
+      return;
     }
+    // After accept/reject, the current change is removed from pending list,
+    // so the same index now points to the next change. Just ensure we're in bounds.
+    if (currentReviewChangeIndex >= pending.length) {
+      // Wrap around to start if we were at the end
+      currentReviewChangeIndex = 0;
+    }
+    selectedReviewChapter = pending[currentReviewChangeIndex].key;
   }
 
   void goToPreviousChange() {

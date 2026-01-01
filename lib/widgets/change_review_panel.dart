@@ -3,11 +3,12 @@ import '../models/bookwash_file.dart';
 
 /// Widget for reviewing individual changes with side-by-side comparison.
 /// Shows original vs cleaned text with word-level highlighting.
-class ChangeReviewPanel extends StatelessWidget {
+/// The cleaned text is editable - user can modify before accepting.
+class ChangeReviewPanel extends StatefulWidget {
   final BookWashChapter chapter;
   final BookWashChange change;
   final VoidCallback onKeepOriginal;
-  final VoidCallback onKeepCleaned;
+  final void Function(String editedText) onKeepCleaned;
 
   const ChangeReviewPanel({
     super.key,
@@ -16,6 +17,36 @@ class ChangeReviewPanel extends StatelessWidget {
     required this.onKeepOriginal,
     required this.onKeepCleaned,
   });
+
+  @override
+  State<ChangeReviewPanel> createState() => _ChangeReviewPanelState();
+}
+
+class _ChangeReviewPanelState extends State<ChangeReviewPanel> {
+  late TextEditingController _cleanedTextController;
+  bool _isEditing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _cleanedTextController = TextEditingController(text: widget.change.cleaned);
+  }
+
+  @override
+  void didUpdateWidget(ChangeReviewPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // When the change changes (new change being reviewed), update the controller
+    if (oldWidget.change.id != widget.change.id) {
+      _cleanedTextController.text = widget.change.cleaned;
+      _isEditing = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _cleanedTextController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,12 +82,12 @@ class ChangeReviewPanel extends StatelessWidget {
           const Icon(Icons.book, size: 16),
           const SizedBox(width: 8),
           Text(
-            'Chapter ${chapter.number}: ${chapter.title}',
+            'Chapter ${widget.chapter.number}: ${widget.chapter.title}',
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           const SizedBox(width: 8),
           Text(
-            '(Change ${change.id})',
+            '(Change ${widget.change.id})',
             style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
           ),
         ],
@@ -87,7 +118,7 @@ class ChangeReviewPanel extends StatelessWidget {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: onKeepOriginal,
+            onPressed: widget.onKeepOriginal,
             icon: const Icon(Icons.arrow_downward, size: 18),
             label: const Text('Keep Orig'),
             style: ElevatedButton.styleFrom(
@@ -109,7 +140,7 @@ class ChangeReviewPanel extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Original (Red = Removed)',
+                'Original (Red = Potentially Offensive)',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Color(0xFFC62828),
@@ -121,8 +152,8 @@ class ChangeReviewPanel extends StatelessWidget {
                 constraints: const BoxConstraints(maxHeight: 150),
                 child: SingleChildScrollView(
                   child: _buildHighlightedText(
-                    change.original,
-                    change.cleaned,
+                    widget.change.original,
+                    widget.change.cleaned,
                     isOriginal: true,
                   ),
                 ),
@@ -141,7 +172,7 @@ class ChangeReviewPanel extends StatelessWidget {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: onKeepCleaned,
+            onPressed: () => widget.onKeepCleaned(_cleanedTextController.text),
             icon: const Icon(Icons.arrow_downward, size: 18),
             label: const Text('Keep Cleaned'),
             style: ElevatedButton.styleFrom(
@@ -162,23 +193,70 @@ class ChangeReviewPanel extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Cleaned (Green = Added/Modified)',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF2E7D32),
-                  fontSize: 12,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _isEditing ? 'Editing...' : 'Cleaned (tap to edit)',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF2E7D32),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  if (_isEditing)
+                    TextButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _cleanedTextController.text = widget.change.cleaned;
+                          _isEditing = false;
+                        });
+                      },
+                      icon: const Icon(Icons.undo, size: 14),
+                      label: const Text(
+                        'Reset',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFF2E7D32),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 8),
               Container(
                 constraints: const BoxConstraints(maxHeight: 150),
                 child: SingleChildScrollView(
-                  child: _buildHighlightedText(
-                    change.original,
-                    change.cleaned,
-                    isOriginal: false,
-                  ),
+                  child: _isEditing
+                      ? TextField(
+                          controller: _cleanedTextController,
+                          maxLines: null,
+                          style: const TextStyle(
+                            color: Color(0xFF212121),
+                            fontSize: 14,
+                          ),
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.all(8),
+                            isDense: true,
+                          ),
+                        )
+                      : GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _isEditing = true;
+                            });
+                          },
+                          child: _buildHighlightedText(
+                            widget.change.original,
+                            _cleanedTextController.text,
+                            isOriginal: false,
+                          ),
+                        ),
                 ),
               ),
             ],
@@ -200,16 +278,14 @@ class ChangeReviewPanel extends StatelessWidget {
     final words = text.split(RegExp(r'\s+'));
     final otherWords = otherText.split(RegExp(r'\s+'));
 
-    final textColor = isOriginal
-        ? const Color(0xFF212121)
-        : const Color(0xFF212121);
+    const textColor = Color(0xFF212121);
     final highlightColor = isOriginal
         ? const Color(0xFFEF5350)
         : const Color(0xFF66BB6A);
 
     return RichText(
       text: TextSpan(
-        style: TextStyle(color: textColor, fontSize: 14),
+        style: const TextStyle(color: textColor, fontSize: 14),
         children: words.asMap().entries.map((entry) {
           final index = entry.key;
           final word = entry.value;

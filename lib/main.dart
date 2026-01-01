@@ -118,10 +118,6 @@ class _BookWashHomeState extends State<BookWashHome> {
   final _scrollController = ScrollController();
   bool _autoScrollLog = true; // user-controlled auto-scroll for live log
 
-  // Debug comparisons (per paragraph)
-  // key: unique id "chapterIndex:changeId"; value: [original, cleaned]
-  final Map<String, List<String>> _paraComparisons = {};
-
   // Cleaned book data
   List<String> cleanedParagraphs = [];
   Map<int, int> paragraphToChapter =
@@ -697,17 +693,17 @@ class _BookWashHomeState extends State<BookWashHome> {
           progress = 0.50; // Start cleaning at 50%
         });
       }
-    } else if (line.contains('=== PASS 1: LANGUAGE CLEANING ===')) {
+    } else if (line.contains('=== PASS 1: LANGUAGE CLEANING')) {
       setState(() {
         cleaningSubPhase = 'language';
         progressCurrent = 0;
       });
-    } else if (line.contains('=== PASS 2: ADULT CONTENT CLEANING ===')) {
+    } else if (line.contains('=== PASS 2: ADULT CONTENT CLEANING')) {
       setState(() {
         cleaningSubPhase = 'adult';
         progressCurrent = 0;
       });
-    } else if (line.contains('=== PASS 3: VIOLENCE CLEANING ===')) {
+    } else if (line.contains('=== PASS 3: VIOLENCE CLEANING')) {
       setState(() {
         cleaningSubPhase = 'violence';
         progressCurrent = 0;
@@ -818,22 +814,6 @@ class _BookWashHomeState extends State<BookWashHome> {
         bookwashFile = parsed;
         selectedReviewChapter = 0;
         currentReviewChangeIndex = 0;
-
-        // Populate comparison map from bookwash changes
-        _paraComparisons.clear();
-        for (
-          int chapterIdx = 0;
-          chapterIdx < parsed.chapters.length;
-          chapterIdx++
-        ) {
-          final chapter = parsed.chapters[chapterIdx];
-          for (final change in chapter.changes) {
-            if (change.original.isNotEmpty && change.cleaned.isNotEmpty) {
-              final key = '$chapterIdx:${change.id}';
-              _paraComparisons[key] = [change.original, change.cleaned];
-            }
-          }
-        }
       });
     } catch (e) {
       _addLogMessage('❌ Failed to load bookwash file: $e');
@@ -893,11 +873,17 @@ class _BookWashHomeState extends State<BookWashHome> {
     return changes;
   }
 
-  void _acceptChange(BookWashChange change) {
+  void _acceptChange(BookWashChange change, {String? editedText}) {
     setState(() {
       change.status = 'accepted';
+      // If the user edited the text, update the cleaned field
+      if (editedText != null && editedText != change.cleaned) {
+        change.cleaned = editedText;
+      }
     });
     _moveToNextChange();
+    // Auto-save after each change
+    _saveBookwashFile();
   }
 
   void _acceptAllChanges() {
@@ -905,10 +891,13 @@ class _BookWashHomeState extends State<BookWashHome> {
       for (final entry in _allPendingChanges) {
         entry.value.status = 'accepted';
       }
+      currentReviewChangeIndex = 0;
     });
     _addLogMessage(
       '✅ Accepted all ${_allPendingChanges.length} pending changes',
     );
+    // Auto-save after bulk accept
+    _saveBookwashFile();
   }
 
   void _acceptAllLanguageChanges() {
@@ -916,49 +905,21 @@ class _BookWashHomeState extends State<BookWashHome> {
     setState(() {
       for (final entry in _allPendingChanges) {
         final change = entry.value;
-        // Check if this is a language change by looking for common profanity replacements
-        if (_isLanguageChange(change)) {
+        // Check if this change has the language cleaning marker
+        if (change.reason.contains('language')) {
           change.status = 'accepted';
           acceptedCount++;
         }
       }
+      // Reset index to be within bounds of remaining pending changes
+      final remaining = _allPendingChanges.length;
+      if (currentReviewChangeIndex >= remaining) {
+        currentReviewChangeIndex = remaining > 0 ? 0 : 0;
+      }
     });
     _addLogMessage('✅ Accepted $acceptedCount language changes');
-  }
-
-  bool _isLanguageChange(BookWashChange change) {
-    // Check if the change is primarily language-related by looking for common
-    // profanity replacements in the diff between original and cleaned
-    final original = change.original.toLowerCase();
-    final cleaned = change.cleaned.toLowerCase();
-
-    // Common language replacements - if cleaned has these alternatives, it's likely language
-    final languageReplacements = [
-      'darn',
-      'dang',
-      'heck',
-      'gosh',
-      'fudge',
-      'shoot',
-      'crap',
-      'jerk',
-      'idiot',
-      'fool',
-      'moron',
-      'butt',
-      'rear',
-      'behind',
-      'curses',
-      'blast',
-      'confound',
-    ];
-
-    for (final replacement in languageReplacements) {
-      if (cleaned.contains(replacement) && !original.contains(replacement)) {
-        return true;
-      }
-    }
-    return false;
+    // Auto-save after bulk accept
+    _saveBookwashFile();
   }
 
   void _rejectChange(BookWashChange change) {
@@ -966,21 +927,25 @@ class _BookWashHomeState extends State<BookWashHome> {
       change.status = 'rejected';
     });
     _moveToNextChange();
+    // Auto-save after each change
+    _saveBookwashFile();
   }
 
   void _moveToNextChange() {
     final pending = _allPendingChanges;
-    if (currentReviewChangeIndex < pending.length - 1) {
-      setState(() {
-        currentReviewChangeIndex++;
-        selectedReviewChapter = pending[currentReviewChangeIndex].key;
-      });
-    } else if (pending.isNotEmpty) {
-      setState(() {
-        currentReviewChangeIndex = 0;
-        selectedReviewChapter = pending[0].key;
-      });
+    if (pending.isEmpty) {
+      // No more pending changes
+      return;
     }
+    // After accept/reject, the current change is removed from pending list,
+    // so the same index now points to the next change. Just ensure we're in bounds.
+    setState(() {
+      if (currentReviewChangeIndex >= pending.length) {
+        // Wrap around to start if we were at the end
+        currentReviewChangeIndex = 0;
+      }
+      selectedReviewChapter = pending[currentReviewChangeIndex].key;
+    });
   }
 
   Future<void> _saveBookwashFile() async {
@@ -1206,7 +1171,7 @@ class _BookWashHomeState extends State<BookWashHome> {
                       const SizedBox(height: 12),
                       // Segmented progress bar for cleaning
                       if (progressPhase == 'cleaning') ...[
-                        // Show 4-segment progress bar for cleaning phases
+                        // Show 5-segment progress bar for cleaning phases
                         Row(
                           children: [
                             Expanded(
@@ -1215,6 +1180,18 @@ class _BookWashHomeState extends State<BookWashHome> {
                                 children: [
                                   Row(
                                     children: [
+                                      CleaningPhaseSegment(
+                                        label: 'Identify',
+                                        isActive:
+                                            cleaningSubPhase == 'identifying',
+                                        isComplete:
+                                            cleaningSubPhase == 'language' ||
+                                            cleaningSubPhase == 'adult' ||
+                                            cleaningSubPhase == 'violence' ||
+                                            cleaningSubPhase == 'verifying',
+                                        color: Colors.orange,
+                                      ),
+                                      const SizedBox(width: 4),
                                       CleaningPhaseSegment(
                                         label: 'Language',
                                         isActive:
@@ -1395,133 +1372,17 @@ class _BookWashHomeState extends State<BookWashHome> {
                                 itemCount: liveLogMessages.length,
                                 itemBuilder: (context, index) {
                                   final log = liveLogMessages[index];
-                                  int? chapterForLog;
-                                  int? paraForLog;
-                                  final chMatch = RegExp(
-                                    r'Chapter\s+(\d+)',
-                                  ).firstMatch(log);
-                                  if (chMatch != null) {
-                                    chapterForLog = int.tryParse(
-                                      chMatch.group(1)!,
-                                    );
-                                  }
-                                  final paraMatch = RegExp(
-                                    r'paragraph\s+(\d+)',
-                                  ).firstMatch(log.toLowerCase());
-                                  if (paraMatch != null) {
-                                    paraForLog = int.tryParse(
-                                      paraMatch.group(1)!,
-                                    );
-                                  }
-                                  String? key;
-                                  if (chapterForLog != null &&
-                                      paraForLog != null) {
-                                    key =
-                                        '${chapterForLog - 1}:${paraForLog - 1}';
-                                  }
-                                  final hasComparison =
-                                      key != null &&
-                                      _paraComparisons.containsKey(key);
-
                                   return Padding(
                                     padding: const EdgeInsets.symmetric(
-                                      vertical: 4,
+                                      vertical: 2,
                                     ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        SelectableText(
-                                          log,
-                                          style: const TextStyle(
-                                            fontSize: 11,
-                                            fontFamily: 'monospace',
-                                            color: Colors.orange,
-                                          ),
-                                        ),
-                                        if (hasComparison)
-                                          Container(
-                                            margin: const EdgeInsets.only(
-                                              top: 0,
-                                            ),
-                                            padding: const EdgeInsets.all(8),
-                                            decoration: BoxDecoration(
-                                              color: Colors.black.withOpacity(
-                                                0.2,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                              border: Border.all(
-                                                color: Colors.orange
-                                                    .withOpacity(0.3),
-                                              ),
-                                            ),
-                                            child: Row(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Expanded(
-                                                  child: Column(
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .start,
-                                                    children: [
-                                                      const Text(
-                                                        'Original (Red = Removed)',
-                                                        style: TextStyle(
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                          color: Colors.red,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(height: 4),
-                                                      SingleChildScrollView(
-                                                        scrollDirection:
-                                                            Axis.horizontal,
-                                                        child: OriginalTextHighlight(
-                                                          original:
-                                                              _paraComparisons[key]![0],
-                                                          cleaned:
-                                                              _paraComparisons[key]![1],
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 12),
-                                                Expanded(
-                                                  child: Column(
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .start,
-                                                    children: [
-                                                      const Text(
-                                                        'Cleaned (Green = Added/Modified)',
-                                                        style: TextStyle(
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                          color: Colors.green,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(height: 4),
-                                                      // Show diff-highlighted comparison
-                                                      SingleChildScrollView(
-                                                        scrollDirection:
-                                                            Axis.horizontal,
-                                                        child: CleanedTextHighlight(
-                                                          original:
-                                                              _paraComparisons[key]![0],
-                                                          cleaned:
-                                                              _paraComparisons[key]![1],
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                      ],
+                                    child: SelectableText(
+                                      log,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontFamily: 'monospace',
+                                        color: Colors.orange,
+                                      ),
                                     ),
                                   );
                                 },
@@ -1594,8 +1455,9 @@ class _BookWashHomeState extends State<BookWashHome> {
                           onKeepOriginal: () => _rejectChange(
                             _allPendingChanges[currentReviewChangeIndex].value,
                           ),
-                          onKeepCleaned: () => _acceptChange(
+                          onKeepCleaned: (editedText) => _acceptChange(
                             _allPendingChanges[currentReviewChangeIndex].value,
+                            editedText: editedText,
                           ),
                         ),
                         const SizedBox(height: 16),

@@ -42,6 +42,8 @@ PHRASE_REPLACEMENTS: List[Tuple[str, str]] = [
     ("oh hell", "oh no"),
     ("oh shit", "oh no"),
     ("oh fuck", "oh no"),
+
+    ("god damn it", "curses"),
     
     # "go to hell" / dismissals
     ("go to hell", "go away"),
@@ -63,6 +65,8 @@ PHRASE_REPLACEMENTS: List[Tuple[str, str]] = [
     ("for god's sake", "for goodness' sake"),
     ("god's sake", "goodness' sake"),
     ("for christ's sake", "for goodness' sake"),
+
+    ("my god", "my goodness"),
     
     # State descriptions
     ("fucked up", "messed up"),
@@ -119,7 +123,6 @@ PHRASE_REPLACEMENTS: List[Tuple[str, str]] = [
     # "holy X"
     ("holy shit", "oh wow"),
     ("holy fuck", "holy goodness"),
-    ("holy crap", "holy cow"),
 ]
 
 # =============================================================================
