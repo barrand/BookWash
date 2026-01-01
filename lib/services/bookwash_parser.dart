@@ -149,11 +149,26 @@ class BookWashParser {
           inCleaned = false;
           originalLines.clear();
           cleanedLines.clear();
+
+          // Keep the #CHANGE: line in contentLines to preserve position
+          currentChapter.contentLines.add(line);
         } else if (currentChange != null) {
+          // Keep all change block lines in contentLines to preserve position
+          currentChapter.contentLines.add(line);
+
           if (line.startsWith('#STATUS:')) {
             currentChange.status = line.substring(8).trim();
           } else if (line.startsWith('#REASON:')) {
-            currentChange.reason = line.substring(8).trim();
+            // Legacy: ignore #REASON lines, we build reason from markers
+          } else if (line == '#NEEDS_LANGUAGE_CLEANING') {
+            currentChange.reason +=
+                (currentChange.reason.isEmpty ? '' : ' + ') + 'language';
+          } else if (line == '#NEEDS_ADULT_CLEANING') {
+            currentChange.reason +=
+                (currentChange.reason.isEmpty ? '' : ' + ') + 'adult content';
+          } else if (line == '#NEEDS_VIOLENCE_CLEANING') {
+            currentChange.reason +=
+                (currentChange.reason.isEmpty ? '' : ' + ') + 'violence';
           } else if (line.trim() == '#ORIGINAL') {
             inOriginal = true;
             inCleaned = false;
@@ -173,8 +188,6 @@ class BookWashParser {
             originalLines.add(line);
           } else if (inCleaned) {
             cleanedLines.add(line);
-          } else {
-            currentChapter.contentLines.add(line);
           }
         } else {
           currentChapter.contentLines.add(line);
@@ -242,6 +255,15 @@ class BookWashParser {
 
     // Chapters
     for (final chapter in bookwash.chapters) {
+      // Build a map of change ID -> change for quick lookup
+      final changeMap = <String, BookWashChange>{};
+      for (final change in chapter.changes) {
+        changeMap[change.id] = change;
+      }
+
+      // Track which changes we've written (to handle any not in contentLines)
+      final writtenChangeIds = <String>{};
+
       lines.add('#SECTION: ${chapter.sectionLabel}');
 
       if (chapter.title.isNotEmpty) {
@@ -260,29 +282,77 @@ class BookWashParser {
         lines.add('#NEEDS_CLEANING: ${chapter.needsCleaning}');
       }
 
-      // Content lines (outside of changes)
-      for (final contentLine in chapter.contentLines) {
-        // Skip lines that are part of change blocks (they'll be rewritten)
-        if (!contentLine.startsWith('#CHANGE:') &&
-            !contentLine.startsWith('#STATUS:') &&
-            !contentLine.startsWith('#REASON:') &&
-            contentLine.trim() != '#ORIGINAL' &&
-            contentLine.trim() != '#CLEANED' &&
-            contentLine.trim() != '#END') {
-          lines.add(contentLine);
+      // Process content lines, expanding #CHANGE: markers with full change data
+      int i = 0;
+      while (i < chapter.contentLines.length) {
+        final contentLine = chapter.contentLines[i];
+
+        if (contentLine.startsWith('#CHANGE:')) {
+          // Extract change ID and look up the change
+          final changeId = contentLine.substring(8).trim();
+          final change = changeMap[changeId];
+
+          if (change != null) {
+            // First, collect any #NEEDS_*_CLEANING markers from the old block
+            final cleaningMarkers = <String>[];
+            int j = i + 1;
+            while (j < chapter.contentLines.length) {
+              final checkLine = chapter.contentLines[j];
+              if (checkLine == '#NEEDS_LANGUAGE_CLEANING' ||
+                  checkLine == '#NEEDS_ADULT_CLEANING' ||
+                  checkLine == '#NEEDS_VIOLENCE_CLEANING') {
+                cleaningMarkers.add(checkLine);
+              }
+              if (checkLine.trim() == '#ORIGINAL' ||
+                  checkLine.trim() == '#END') {
+                break;
+              }
+              j++;
+            }
+
+            // Write the full change block with current status and preserved markers
+            lines.add('#CHANGE: ${change.id}');
+            lines.add('#STATUS: ${change.status}');
+            for (final marker in cleaningMarkers) {
+              lines.add(marker);
+            }
+            lines.add('#ORIGINAL');
+            lines.add(change.original);
+            lines.add('#CLEANED');
+            lines.add(change.cleaned);
+            lines.add('#END');
+            writtenChangeIds.add(changeId);
+
+            // Skip past the old change block in contentLines
+            i++;
+            while (i < chapter.contentLines.length) {
+              final skipLine = chapter.contentLines[i];
+              if (skipLine.trim() == '#END') {
+                i++; // Skip the #END line too
+                break;
+              }
+              i++;
+            }
+            continue;
+          }
         }
+
+        // Regular content line - just add it
+        lines.add(contentLine);
+        i++;
       }
 
-      // Changes
+      // Write any changes that weren't in contentLines (shouldn't normally happen)
       for (final change in chapter.changes) {
-        lines.add('#CHANGE: ${change.id}');
-        lines.add('#STATUS: ${change.status}');
-        lines.add('#REASON: ${change.reason}');
-        lines.add('#ORIGINAL');
-        lines.add(change.original);
-        lines.add('#CLEANED');
-        lines.add(change.cleaned);
-        lines.add('#END');
+        if (!writtenChangeIds.contains(change.id)) {
+          lines.add('#CHANGE: ${change.id}');
+          lines.add('#STATUS: ${change.status}');
+          lines.add('#ORIGINAL');
+          lines.add(change.original);
+          lines.add('#CLEANED');
+          lines.add(change.cleaned);
+          lines.add('#END');
+        }
       }
     }
 

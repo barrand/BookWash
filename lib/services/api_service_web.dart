@@ -93,6 +93,11 @@ class WebApiService implements ApiService {
   }) async {
     final uri = Uri.parse('$_baseUrl/api/process/$sessionId');
 
+    // UI uses 1-4 where 4="Unfiltered", Python uses 1-5 where 5=X (max)
+    // Map UI level 4 to Python level 5 so "Unfiltered" means nothing gets flagged
+    final pythonAdult = targetAdult == 4 ? 5 : targetAdult;
+    final pythonViolence = targetViolence == 4 ? 5 : targetViolence;
+
     final response = await http.post(
       uri,
       headers: {
@@ -100,8 +105,8 @@ class WebApiService implements ApiService {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: {
-        'target_adult': targetAdult.toString(),
-        'target_violence': targetViolence.toString(),
+        'target_adult': pythonAdult.toString(),
+        'target_violence': pythonViolence.toString(),
         'model': model,
       },
     );
