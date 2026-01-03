@@ -108,8 +108,10 @@ class DesktopApiService implements ApiService {
     }
 
     session.status = 'processing';
-    session.targetAdult = targetAdult;
-    session.targetViolence = targetViolence;
+    // UI uses 1-4 where 4="Unfiltered", Python uses 1-5 where 5=X (max)
+    // Map UI level 4 to Python level 5 so "Unfiltered" means nothing gets flagged
+    session.targetAdult = targetAdult == 4 ? 5 : targetAdult;
+    session.targetViolence = targetViolence == 4 ? 5 : targetViolence;
     session.model = model;
 
     // Start processing in background

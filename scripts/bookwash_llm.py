@@ -1023,27 +1023,22 @@ For example, if 'shit' is listed, also flag 'sh*t', 'shite', 'shitty', 'shitshow
         
         prompt = f"""Analyze each numbered paragraph and identify which ones contain content that exceeds the target ratings.
 
+⚠️ CRITICAL: When in doubt, FLAG IT. It is much better to flag a paragraph that might be fine than to miss one that needs cleaning. False positives are acceptable; false negatives are not.
+
 RATING SCALE DEFINITIONS:
 
 {language_section}
 
-SEXUAL CONTENT:
-- G: No romantic/sexual content, no body-focused descriptions
-- PG: Light romance only: hand-holding, brief innocent kiss goodbye, friendly hug
-- PG-13: ANY of the following makes it PG-13:
-  * Passionate or sustained kissing
-  * Implied intimacy (fade-to-black, "the door closed", "they spent the night")
-  * Post-intimacy scenes ("tangled in sheets", "afterward they lay together", morning-after)
-  * Physical arousal cues (racing hearts from attraction, flushed from desire)
-  * Suggestive body descriptions (curves, cleavage, bare skin in romantic context)
-- R: Descriptive sexual scenes, explicit body touching, nudity in intimate context
-- X: Explicit sexual activity described graphically
+SEXUAL CONTENT - Use MPAA film rating standards:
+- G: No romance. Content suitable for young children.
+- PG: Light romance (hand-holding, quick innocent kiss). Nothing that would make a parent uncomfortable.
+- PG-13: Passionate kissing, implied intimacy, fade-to-black. The camera cuts away before anything explicit.
+- R: Sexual content that would get a film an R rating. Descriptive intimate scenes, even if poetic/metaphorical.
+- NC-17/X: Explicit, graphic sexual content.
 
-⚠️ KEY PG-13 TRIGGERS (these are NOT PG):
-- "tangled in sheets" or similar post-sex imagery → PG-13
-- "hearts racing" in romantic context → PG-13
-- "pulling closer" in bed → PG-13  
-- Any implication that characters just had or will have sex → PG-13
+CRITICAL: Authors often describe sex through metaphor, poetry, or fragmented prose rather than explicit terms. 
+If you're reading a scene and thinking "this is clearly describing sex, just artistically" → rate it R.
+Poetic language does not reduce the rating. A sex scene written beautifully is still a sex scene.
 
 VIOLENCE:
 - G: No physical violence (arguments only)
@@ -1071,7 +1066,20 @@ Example response:
 Text to analyze:
 """
         
+        # DEBUG: Log what we're sending
+        if os.environ.get('BOOKWASH_DEBUG_IDENTIFY'):
+            print(f"\n{'='*60}")
+            print(f"DEBUG IDENTIFY: Sending {len(paragraphs)} paragraphs:")
+            print(f"{'='*60}")
+            print(text)
+            print(f"{'='*60}")
+        
         response = self._make_request(prompt, text, log_type='rating')
+        
+        # DEBUG: Log what the LLM responded
+        if os.environ.get('BOOKWASH_DEBUG_IDENTIFY'):
+            print(f"DEBUG IDENTIFY: LLM response: '{response}'")
+            print(f"{'='*60}\n")
         
         # If content was blocked, assume ALL paragraphs need cleaning
         if response == '[BLOCKED_BY_SAFETY_FILTER]':
@@ -1092,6 +1100,145 @@ Text to analyze:
                     flagged_indices.append(idx)
         
         return flagged_indices
+    
+    def rate_paragraphs(self, paragraphs: list, target_sexual: int, target_violence: int,
+                        language_words: list = None) -> list:
+        """Rate each paragraph and return MPAA ratings for diagnostic purposes.
+        
+        Args:
+            paragraphs: List of paragraph strings
+            target_sexual: Target sexual content level  
+            target_violence: Target violence level
+            language_words: Optional list of specific words to filter (from checkboxes)
+            
+        Returns:
+            List of dicts, one per paragraph:
+            {
+                'sexual': 'G'|'PG'|'PG-13'|'R'|'X',
+                'violence': 'G'|'PG'|'PG-13'|'R'|'X',
+                'language': True|False,  # Whether language words detected
+                'exceeds_sexual': bool,
+                'exceeds_violence': bool,
+                'exceeds_language': bool
+            }
+        """
+        sexual_name = LEVEL_TO_RATING.get(target_sexual, 'PG')
+        violence_name = LEVEL_TO_RATING.get(target_violence, 'X')
+        
+        # Build dynamic language section based on user's word list
+        if language_words:
+            words_str = ', '.join(language_words)
+            language_section = f"""LANGUAGE CONTENT DETECTION:
+The user wants to filter these specific words: {words_str}
+Flag YES for any paragraph containing these words OR any similarly offensive profanity/slurs.
+Include variations, misspellings, and words of similar offensiveness level."""
+        else:
+            language_section = """LANGUAGE CONTENT: No language filtering requested - always report NO."""
+        
+        # Number each paragraph for reference
+        numbered = []
+        for i, p in enumerate(paragraphs):
+            numbered.append(f"[{i+1}] {p}")
+        text = '\n\n'.join(numbered)
+        
+        prompt = f"""Rate each numbered paragraph for content. Provide MPAA-style ratings.
+
+{language_section}
+
+SEXUAL CONTENT - Use MPAA film rating standards:
+- G: No romance. Content suitable for young children.
+- PG: Light romance (hand-holding, quick innocent kiss).
+- PG-13: Passionate kissing, implied intimacy, fade-to-black.
+- R: Sexual content that would get a film an R rating. Descriptive intimate scenes, even if poetic/metaphorical.
+- X: Explicit, graphic sexual content.
+
+CRITICAL: Authors often describe sex through metaphor, poetry, or fragmented prose.
+If it's clearly describing sex artistically → rate it R.
+Poetic language does not reduce the rating.
+
+VIOLENCE:
+- G: No physical violence (arguments only)
+- PG: Mild action, non-detailed scuffles, no blood
+- PG-13: Combat, injuries, some blood, weapon use
+- R: Graphic injury detail, notable gore, intense sustained violence
+- X: Extreme gore/torture, sadistic detail
+
+TARGET RATINGS (for reference - still rate honestly):
+- Language: {('filter words: ' + ', '.join(language_words)) if language_words else 'none'}
+- Sexual: {sexual_name}
+- Violence: {violence_name}
+
+For EACH paragraph, respond with its number and ratings on ONE line.
+Format: [number] LANG=[YES/NO] SEXUAL=[rating] VIOLENCE=[rating]
+
+Example response:
+1 LANG=NO SEXUAL=G VIOLENCE=G
+2 LANG=YES SEXUAL=PG-13 VIOLENCE=G
+3 LANG=NO SEXUAL=R VIOLENCE=PG
+
+Text to analyze:
+"""
+        
+        response = self._make_request(prompt, text, log_type='rating')
+        
+        # Initialize results with defaults
+        results = []
+        for _ in paragraphs:
+            results.append({
+                'sexual': 'G',
+                'violence': 'G', 
+                'language': False,
+                'exceeds_sexual': False,
+                'exceeds_violence': False,
+                'exceeds_language': False
+            })
+        
+        # If content was blocked, assume worst case
+        if response == '[BLOCKED_BY_SAFETY_FILTER]':
+            print(f"    ⚠️  Chunk rating blocked - assuming X for all")
+            for r in results:
+                r['sexual'] = 'X'
+                r['violence'] = 'X'
+                r['language'] = True
+                r['exceeds_sexual'] = True
+                r['exceeds_violence'] = True
+                r['exceeds_language'] = bool(language_words)
+            return results
+        
+        # Parse response
+        for line in response.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Extract paragraph number
+            num_match = re.match(r'\[?(\d+)\]?', line)
+            if not num_match:
+                continue
+            idx = int(num_match.group(1)) - 1  # Convert to 0-based
+            if idx < 0 or idx >= len(paragraphs):
+                continue
+            
+            # Extract ratings
+            lang_match = re.search(r'LANG(?:UAGE)?=\s*(YES|NO)', line, re.IGNORECASE)
+            sexual_match = re.search(r'SEXUAL=\s*(G|PG-13|PG|R|X)', line, re.IGNORECASE)
+            violence_match = re.search(r'VIOLENCE=\s*(G|PG-13|PG|R|X)', line, re.IGNORECASE)
+            
+            if lang_match:
+                results[idx]['language'] = lang_match.group(1).upper() == 'YES'
+            if sexual_match:
+                rating = sexual_match.group(1).upper()
+                results[idx]['sexual'] = rating
+                results[idx]['exceeds_sexual'] = RATING_LEVELS.get(rating, 1) > target_sexual
+            if violence_match:
+                rating = violence_match.group(1).upper()
+                results[idx]['violence'] = rating
+                results[idx]['exceeds_violence'] = RATING_LEVELS.get(rating, 1) > target_violence
+            
+            # Language exceeds if detected and we have words to filter
+            results[idx]['exceeds_language'] = results[idx]['language'] and bool(language_words)
+        
+        return results
     
     def clean_change_block(self, paragraph: str, target_sexual: int, target_violence: int,
                         aggression: int = 1, strategy: str = 'rephrase') -> tuple[str, str]:
@@ -1240,7 +1387,14 @@ CRITICAL RULES:
 3. NEVER use [REDACTED], [REMOVED], [CENSORED], or any bracketed placeholder - ALWAYS replace with actual substitute words or remove the content entirely
 4. Preserve ALL whitespace EXACTLY - same line breaks, same paragraph breaks. If the original has a line break mid-sentence, keep it there.
 5. Keep formatting, punctuation, and quotation marks intact
-6. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup tags exactly as they appear. Only clean the text inside, not the markers themselves.
+
+⚠️ FORMATTING TAGS - CRITICAL ⚠️
+6. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
+   - If the original word has NO tags around it, the replacement must have NO tags
+   - WRONG: "hell" → "[B]heck[/B]" (added tags that weren't there!)
+   - CORRECT: "hell" → "heck" (no tags added)
+   - Only PRESERVE existing tags: "[I]damn[/I]" → "[I]darn[/I]" (kept existing tags)
+
 7. CHAPTER TITLES: The first line may be a chapter title. If it contains profanity, CLEAN it but keep it as a short title (not a paragraph). Example: "The Sh*t Show" → "The Disaster"
 8. DO NOT simplify vocabulary - keep sophisticated words (onerous, nascent, snarled, etc). Only remove inappropriate CONTENT, not complex language.
 9. Narrative descriptions of profanity are ALLOWED at all language levels:
@@ -1334,7 +1488,11 @@ CRITICAL INSTRUCTIONS:
 KEEP all other words not in the removal list or similar severity.
 
 ⚠️ EXCEPTION - LEGITIMATE/PROPER USES (do NOT remove these):
-- "bastard" meaning illegitimate child → KEEP "born a bastard", "the king's bastard son", "his bastard", "[name]'s bastard", "fathered a bastard", "the bastard" (when referring to illegitimate birth)
+- "bastard" meaning illegitimate child → NEVER REPLACE when referring to illegitimate birth status:
+  • "born a bastard", "the king's bastard", "his bastard", "[name]'s bastard", "fathered a bastard"
+  • "I'm a bastard", "I'm his bastard", "You're a bastard" (when discussing parentage)
+  • "the bastard son", "a bastard child", "Gavin's bastard", "Kip was Gavin's bastard"
+  • Context clue: if discussing parentage, lineage, birth status, or social shame of illegitimacy → KEEP
 - "bitch" meaning female dog → KEEP "the bitch and her puppies", "a hunting bitch"
 - "ass" meaning donkey → KEEP "rode an ass", "stubborn as an ass"
 - "damn" meaning to condemn → KEEP "damn his soul", "damned to hell" (religious condemnation) or as a physical construction for blocking water
@@ -1370,105 +1528,36 @@ EXAMPLES:
 
 SEXUAL CONTENT FILTERING (Target: {sexual_name}):
 
-Think like a movie rating board: "Would this scene appear in a {sexual_name}-rated film?"
-"""
+Think like an MPAA rating board. Edit content so it would fit in a {sexual_name}-rated film.
+If content would get a higher rating than {sexual_name} → REMOVE or REWRITE it.
+Poetic/metaphorical sex is still sex - clean it the same way."""
             
-            if sexual == 1:  # G
-                if aggression >= 2:
-                    prompt += """
-TARGET: G-RATED (Disney animated film level)
-- Rewrite scenes so they could appear in a children's animated movie
-- No romantic tension, attraction, or longing between characters
-- Replace intimate scenes with neutral interactions: "They talked for a while."
-- Characters can be friends but no romantic subtext
-- AGGRESSIVE: When in doubt, remove the romantic element entirely"""
-                else:
-                    prompt += """
-TARGET: G-RATED (Disney animated film level)
-- Only content appropriate for a children's animated movie
-- No romantic attraction, desire, or tension between characters
-- Platonic relationships only - no romantic subtext"""
-            elif sexual == 2:  # PG
-                if aggression >= 2:
-                    prompt += """
-TARGET: PG-RATED (Family adventure film level)
-- Only content a parent would be comfortable watching with young children
-- ALLOWED: Quick peck on cheek, holding hands, friendly hugs
-- REMOVE: Anything that would make a parent cover a child's eyes
-- REMOVE: Any scene designed to create arousal or erotic anticipation in the reader
-- REMOVE: Sensory descriptions of intimacy (breath, warmth, skin, proximity creating tension)
-- REMOVE: Surrender, submission, or possession dynamics in intimate context
-- AGGRESSIVE: Replace questionable scenes with brief neutral summaries"""
-                else:
-                    prompt += """
-TARGET: PG-RATED (Family adventure film level)
-- Only content a parent would be comfortable watching with young children
-- ALLOWED: Brief kiss, hand-holding, warm hugs, affectionate gestures
-- REMOVE: Any content that creates erotic tension or anticipation
-- REMOVE: Sensory details meant to evoke arousal (lingering on physical sensations)
-- Ask: "Would this scene play in a family film without awkwardness?"
-- Preserve the plot point, remove the arousing quality"""
-            elif sexual == 3:  # PG-13
+            if sexual >= 4:  # R or Unrated
                 prompt += """
-TARGET: PG-13 (Teen action/drama film level)
-- Content suitable for a Marvel movie or teen drama
-- ALLOWED: Passionate kissing, romantic tension, implied intimacy
-- ALLOWED: "Fade to black" - scene ends before explicit content
-- ALLOWED: Morning-after implications, sensual tension, attraction
-- REMOVE: Explicit sexual acts, graphic anatomical descriptions
-- REMOVE: Extended explicit scenes that would require an R rating"""
-            elif sexual == 4:  # R
+- Almost everything acceptable. Only remove NC-17/explicit pornographic content."""
+            elif aggression >= 2:
                 prompt += """
-TARGET: R-RATED (Adult drama level)
-- Almost everything is acceptable
-- Only remove content that would push to NC-17/pornographic
-- REMOVE: Explicit graphic depictions of sex acts with anatomical detail"""
-            else:  # Unrated
-                prompt += """
-- NO FILTERING - keep all sexual content as-is"""
+- BE AGGRESSIVE: When in doubt, remove it. Replace with brief neutral summaries if needed."""
         
         # Only include violence filtering section if violence is being filtered
         if 'violence' in filters_enabled:
             prompt += f"""
 
-VIOLENCE FILTERING (Target: {violence_name}):"""
+VIOLENCE FILTERING (Target: {violence_name}):
+
+Think like an MPAA rating board. Edit content so it would fit in a {violence_name}-rated film.
+If content would get a higher rating than {violence_name} → REMOVE or REWRITE it."""
             
-            if violence == 1:  # G
-                if aggression >= 2:
-                    prompt += """
-- AGGRESSIVELY remove ALL physical violence, weapons, and conflict descriptions
-- Remove even mentions of violent actions or weapons
-- Keep only dialogue and emotional content"""
-                else:
-                    prompt += """
-- Remove all physical violence, weapons, injury mentions
-- Keep only verbal conflicts"""
-            elif violence == 2:  # PG
-                if aggression >= 2:
-                    prompt += """
-- AGGRESSIVELY restrict to absolute minimum action
-- ALLOWED ONLY: Very brief, non-graphic scuffles (one-line max)
-- REMOVE: Blood, injury descriptions, weapon use, any combat focus
-- REMOVE: Consequences of violence (bruises, pain descriptions)"""
-                else:
-                    prompt += """
-- ALLOWED: Mild scuffles, shoving, non-graphic action
-- REMOVE: Blood, injury detail, weapon focus"""
-            elif violence == 3:  # PG-13
-                # At PG-13, there's limited room for escalation
-                # Normal and aggressive are similar
+            if violence >= 4:  # R or Unrated
                 prompt += """
-- ALLOWED: Combat, blood mentions, injuries, weapon use
-- REMOVE: Graphic gore, visible organs/bones, extreme torture
-- (Aggression: may remove more detailed descriptions if needed)"""
-            elif violence == 4:  # R
+- Almost everything acceptable. Only remove extreme torture-porn or sadistic content."""
+            elif aggression >= 2:
                 prompt += """
-- KEEP almost everything - only remove torture-porn or extreme snuff"""
-            else:  # Unrated
-                prompt += """
-- NO FILTERING - keep all violence as-is"""
+- BE AGGRESSIVE: When in doubt, remove it. Summarize violent events briefly if needed."""
         
         prompt += """
+
+FINAL REMINDER: Do NOT add [B], [I], or any formatting tags. Only keep tags that already exist in the original.
 
 Now filter the following text according to these rules. Return ONLY the cleaned text:
 
@@ -1525,29 +1614,37 @@ def _infer_reason(paragraph: str, target_sexual: int, target_violence: int) -> s
 
 
 def _get_unfilled_changes(chapter) -> list:
-    """Get list of change IDs that have empty #CLEANED sections."""
+    """Get list of change IDs that have status 'pending' and empty #CLEANED sections.
+    
+    Change blocks with status 'ok' are skipped (they don't need cleaning).
+    """
     unfilled = []
     current_change_id = None
+    current_status = None
     in_cleaned = False
     cleaned_content = []
     
     for line in chapter.content_lines:
         if line.startswith('#CHANGE:'):
-            # Save previous change if it had empty cleaned
-            if current_change_id and in_cleaned and not any(c.strip() for c in cleaned_content):
+            # Save previous change if it was pending with empty cleaned
+            if current_change_id and current_status == 'pending' and in_cleaned and not any(c.strip() for c in cleaned_content):
                 unfilled.append(current_change_id)
             # Start new change
             current_change_id = line.split(':')[1].strip()
+            current_status = None
             in_cleaned = False
             cleaned_content = []
+        elif line.startswith('#STATUS:'):
+            current_status = line.split(':')[1].strip().lower()
         elif line == '#CLEANED':
             in_cleaned = True
             cleaned_content = []
         elif line == '#END':
-            # Check if this change had empty cleaned
-            if current_change_id and in_cleaned and not any(c.strip() for c in cleaned_content):
+            # Check if this change was pending with empty cleaned
+            if current_change_id and current_status == 'pending' and in_cleaned and not any(c.strip() for c in cleaned_content):
                 unfilled.append(current_change_id)
             current_change_id = None
+            current_status = None
             in_cleaned = False
             cleaned_content = []
         elif in_cleaned:
@@ -1629,76 +1726,6 @@ def _remove_orphaned_cleaning_markers(bw: 'BookWashFile') -> int:
     return removed_count
 
 
-def _remove_identical_change_blocks(bw: 'BookWashFile') -> int:
-    """Remove change blocks where ORIGINAL == CLEANED (false positives).
-    
-    Returns the number of blocks removed.
-    """
-    removed_count = 0
-    
-    for chapter in bw.chapters:
-        # Parse all change blocks and identify identical ones
-        new_content = []
-        i = 0
-        lines = chapter.content_lines
-        
-        while i < len(lines):
-            line = lines[i]
-            
-            if line.startswith('#CHANGE:'):
-                # Found a change block - parse it completely
-                change_start = i
-                change_id = line.split(':')[1].strip()
-                
-                original_lines = []
-                cleaned_lines = []
-                in_original = False
-                in_cleaned = False
-                change_end = i
-                
-                # Scan through the change block
-                j = i
-                while j < len(lines):
-                    block_line = lines[j]
-                    if block_line == '#ORIGINAL':
-                        in_original = True
-                        in_cleaned = False
-                    elif block_line == '#CLEANED':
-                        in_original = False
-                        in_cleaned = True
-                    elif block_line == '#END':
-                        change_end = j
-                        break
-                    elif in_original and not block_line.startswith('#'):
-                        original_lines.append(block_line)
-                    elif in_cleaned and not block_line.startswith('#'):
-                        cleaned_lines.append(block_line)
-                    j += 1
-                
-                # Compare original and cleaned
-                original_text = '\n'.join(original_lines).strip()
-                cleaned_text = '\n'.join(cleaned_lines).strip()
-                
-                if original_text == cleaned_text and cleaned_text:
-                    # Identical! Skip this change block, output just the original text
-                    removed_count += 1
-                    new_content.append('')  # Empty line before paragraph
-                    new_content.append(original_text)
-                    i = change_end + 1
-                else:
-                    # Keep the change block
-                    while i <= change_end:
-                        new_content.append(lines[i])
-                        i += 1
-            else:
-                new_content.append(line)
-                i += 1
-        
-        chapter.content_lines = new_content
-    
-    return removed_count
-
-
 def _set_change_cleaned(chapter, change_id: str, cleaned_text: str):
     """Set the #CLEANED content for a specific change ID."""
     new_lines = []
@@ -1754,7 +1781,11 @@ def build_chapter_rating_prompt(language_words: list = None) -> str:
    - Include similar severity: if 'bitch' is listed, also detect 'slut', 'son of a bitch'
    
    ⚠️ EXCEPTION - LEGITIMATE/PROPER USES (do NOT flag these):
-   - "bastard" meaning illegitimate child (e.g., "born a bastard", "the king's bastard son", "his bastard", "[name]'s bastard", "fathered a bastard", "the bastard" when referring to illegitimate birth)
+   - "bastard" meaning illegitimate child - NEVER FLAG when referring to illegitimate birth:
+     • "born a bastard", "the king's bastard", "his bastard", "[name]'s bastard", "fathered a bastard"
+     • "I'm a bastard", "I'm his bastard", "You're a bastard" (when discussing parentage)
+     • "the bastard son", "a bastard child", "Gavin's bastard", "Kip was Gavin's bastard"
+     • Context clue: if discussing parentage, lineage, birth status, or social shame of illegitimacy → DO NOT FLAG
    - "bitch" meaning female dog (e.g., "the bitch and her puppies", "a hunting bitch")
    - "ass" meaning donkey (e.g., "rode an ass", "stubborn as an ass")
    - "damn" meaning to condemn (e.g., "damn his soul", "damned to hell" in religious context), or physical construction for retaining water (e.g., "the damn held back the river")
@@ -1777,27 +1808,22 @@ Categories:
 
 {language_section}
 
-2. SEXUAL CONTENT (desire, arousal, sensual tension, intimate dynamics)
-   - G: No romantic undertones, no sensory intimacy, no desire or longing described
-   - PG: Light romance (hand-holding, brief affectionate kiss), no lingering on sensations
-   - PG-13: Passionate kissing, implied intimacy, OR scenes where:
-     * A character experiences or describes desire, longing, arousal, or anticipation
-     * Sensory details create erotic tension (breath, warmth, touch, proximity, skin)
-     * There is surrender, submission, or being claimed/possessed by another
-     * Physical sensations are described in ways meant to evoke arousal
-     * The narrative lingers on lips, mouth, neck, throat, or body in sensual context
-   - R: Descriptive sexual scenes, sustained intimate detail, explicit focus on erogenous areas
-   - X: Explicit sexual activity described graphically
+2. SEXUAL CONTENT - Use MPAA film rating standards:
+   - G: No romance. Content suitable for young children.
+   - PG: Light romance (hand-holding, quick innocent kiss). Nothing that would make a parent uncomfortable.
+   - PG-13: Passionate kissing, implied intimacy, fade-to-black. The camera cuts away before anything explicit.
+   - R: Sexual content that would get a film an R rating. Descriptive intimate scenes, even if poetic/metaphorical.
+   - X: Explicit, graphic sexual content.
 
-   CRITICAL: Rate based on the EMOTIONAL and SENSORY experience being portrayed.
-   Vampire biting scenes with sensual buildup = PG-13 or higher.
-   Innuendo and subtext count: if it reads as sexual, rate it as sexual.
+   CRITICAL: Authors often describe sex through metaphor, poetry, or fragmented prose.
+   If it's clearly describing sex artistically → rate it R.
+   Poetic language does not reduce the rating.
 
-3. VIOLENCE (fighting, gore, harm)
+3. VIOLENCE - Use MPAA film rating standards:
    - G: No physical violence (arguments only)
-   - PG: Mild action, non-detailed scuffles, no blood
-   - PG-13: Combat, injuries, some blood, weapon use without gore detail
-   - R: Graphic injury detail, notable gore, intense sustained violence
+   - PG: Mild action, brief scuffles, no blood
+   - PG-13: Combat, injuries, some blood, weapon use
+   - R: Graphic injury detail, notable gore, intense violence
    - X: Extreme gore/torture, sadistic detail
 
 Respond in EXACTLY this format (one rating per line):
@@ -1831,27 +1857,22 @@ For example, if 'shit' is listed, also flag 'sh*t', 'shite', 'crap', etc."""
 
     prompt = f"""Analyze each numbered paragraph and identify which ones contain content that exceeds the target ratings.
 
+⚠️ CRITICAL: When in doubt, FLAG IT. It is much better to flag a paragraph that might be fine than to miss one that needs cleaning. False positives are acceptable; false negatives are not.
+
 RATING SCALE DEFINITIONS:
 
 {language_section}
 
-SEXUAL CONTENT:
-- G: No romantic/sexual content, no body-focused descriptions
-- PG: Light romance only: hand-holding, brief innocent kiss goodbye, friendly hug
-- PG-13: ANY of the following makes it PG-13:
-  * Passionate or sustained kissing
-  * Implied intimacy (fade-to-black, "the door closed", "they spent the night")
-  * Post-intimacy scenes ("tangled in sheets", "afterward they lay together", morning-after)
-  * Physical arousal cues (racing hearts from attraction, flushed from desire)
-  * Suggestive body descriptions (curves, cleavage, bare skin in romantic context)
-- R: Descriptive sexual scenes, explicit body touching, nudity in intimate context
-- X: Explicit sexual activity described graphically
+SEXUAL CONTENT - Use MPAA film rating standards:
+- G: No romance. Content suitable for young children.
+- PG: Light romance (hand-holding, quick innocent kiss). Nothing that would make a parent uncomfortable.
+- PG-13: Passionate kissing, implied intimacy, fade-to-black. The camera cuts away before anything explicit.
+- R: Sexual content that would get a film an R rating. Descriptive intimate scenes, even if poetic/metaphorical.
+- NC-17/X: Explicit, graphic sexual content.
 
-⚠️ KEY PG-13 TRIGGERS (these are NOT PG):
-- "tangled in sheets" or similar post-sex imagery → PG-13
-- "hearts racing" in romantic context → PG-13
-- "pulling closer" in bed → PG-13  
-- Any implication that characters just had or will have sex → PG-13
+CRITICAL: Authors often describe sex through metaphor, poetry, or fragmented prose rather than explicit terms. 
+If you're reading a scene and thinking "this is clearly describing sex, just artistically" → rate it R.
+Poetic language does not reduce the rating. A sex scene written beautifully is still a sex scene.
 
 VIOLENCE:
 - G: No physical violence (arguments only)
@@ -1945,7 +1966,7 @@ def build_language_cleaning_prompt(language_words: list) -> str:
     
     if blasphemous:
         replacement_rules.append("""BLASPHEMOUS EXPRESSIONS (goddamn, jesus christ as expletive, oh my god):
-   - "goddamn" → "holy cow" or remove
+   - "goddamn" → "goodness" or remove
    - "Jesus Christ!" (as expletive) → "Good grief!" or remove
    - "Oh my god!" (as expletive) → "Oh my!" or "Oh my goodness!"
    - Keep genuine religious usage (prayer, worship) unchanged""")
@@ -1981,7 +2002,15 @@ def build_language_cleaning_prompt(language_words: list) -> str:
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions. If a line break occurs mid-sentence, keep it there.
 3. DO NOT change anything else - keep all other content identical
 4. Narrative descriptions like "he cursed" or "she swore" are ALLOWED - only remove actual offensive words
-5. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup tags exactly as they appear. Only clean the text inside, not the markers themselves.
+
+⚠️ FORMATTING TAGS - CRITICAL ⚠️
+5. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
+   - If the original word has NO tags around it, the replacement must have NO tags
+   - WRONG: "hell" → "[B]heck[/B]" (added tags that weren't there!)
+   - CORRECT: "hell" → "heck" (no tags added)
+   - WRONG: "son of a bitch" → "[B]scoundrel[/B]" (added tags!)
+   - CORRECT: "son of a bitch" → "scoundrel" (no tags)
+   - Only PRESERVE existing tags: "[I]damn[/I]" → "[I]darn[/I]" (kept existing tags)
 
 SENTENCE REPAIR (VERY IMPORTANT):
 - NEVER leave a sentence starting with just "It," or "This," - that is broken grammar
@@ -2011,243 +2040,81 @@ Text to clean:
 def build_adult_cleaning_prompt(target_sexual: int) -> str:
     """Build a focused prompt for adult content cleaning.
     
-    Each level has very specific, bespoke rules for what's allowed and what must go.
+    Uses MPAA rating standards - trusts LLM knowledge rather than prescriptive lists.
     """
+    rating_name = LEVEL_TO_RATING.get(target_sexual, 'PG')
     
-    if target_sexual == 1:  # G rating
-        return """You are cleaning romantic/sensual content to achieve a G (General Audiences) rating.
-
-Think like a movie rating board: G means Disney animated film level - suitable for all ages.
-
-THE TEST: Would this appear in a G-rated Disney or Pixar movie?
-- If NO → Remove or rewrite it
-- If YES → Keep it
-
-G-RATED ROMANCE LOOKS LIKE:
-- Characters can be friends, but no romantic tension
-- Family affection (parent-child hugs) is fine
-- No "special feelings" about someone's appearance
-- No longing, attraction, or romantic anticipation
-
-CLEANING APPROACH:
-- Romantic scenes → platonic friendship moments
-- Physical attraction → simple observation or remove
-- "His heart raced when she smiled" → just remove it
-- Any kiss → remove or change to wave/verbal goodbye
-
-RULES:
-1. Return ONLY the cleaned text - no explanations
-2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
-4. When uncertain, remove it
-
-Text to clean:
-"""
-
-    elif target_sexual == 2:  # PG rating
-        return """You are cleaning romantic/sensual content to achieve a PG (Parental Guidance) rating.
-
-Think like a movie rating board: PG means family adventure film level - parents might want to know what's in it.
-
-THE TEST: Would this scene work in a PG family movie like a Pixar film or light Disney adventure?
-- If a parent might cover their child's eyes → REMOVE IT
-- If it would cause giggles but not discomfort → KEEP IT
-
-PG-RATED ROMANCE LOOKS LIKE:
-- Quick, innocent kisses (pecks)
-- Hand-holding, warm hugs
-- "I love you" is fine
-- Simple attraction statements ("she was pretty")
-
-WHAT CROSSES THE LINE (remove these):
-- Kisses that linger or deepen
-- Sensory details of physical closeness (breath, warmth, heartbeat from desire)
-- Anticipation of physical intimacy
-- Focus on bodies in attraction context
-- Anything that makes the reader feel aroused
-
-CLEANING APPROACH:
-- Passionate moment → brief, sweet moment
-- Sensory buildup → simple statement
-- Scene focused on physical desire → time skip or remove
-
-RULES:
-1. Return ONLY the cleaned text - no explanations
-2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
-4. When uncertain, remove it
-
-Text to clean:
-"""
-
-    elif target_sexual == 3:  # PG-13 rating
-        return """You are cleaning romantic/sensual content to achieve a PG-13 rating.
-
-Think like a movie rating board: PG-13 means teen movie level - Marvel films, YA adaptations, teen dramas.
-
-THE TEST: Would this scene work in a PG-13 movie aimed at teenagers?
-- Passion and tension are fine
-- "Fade to black" before anything explicit
-- Suggestion and implication are okay, graphic detail is not
-
-PG-13 ROMANCE LOOKS LIKE:
-- Passionate, intense kissing
-- Strong physical attraction and tension
-- "They fell into bed..." then skip ahead
-- Morning-after scenes (waking up together, implied)
-- Emotional intensity, desire, wanting
-
-WHAT CROSSES THE LINE (remove these):
-- Actual description of sexual activity
-- Nudity described in detail
-- Explicit physical arousal
-- Graphic physical sensations
-- Sexual dialogue beyond innuendo
-
-CLEANING APPROACH:
-- Explicit scene → fade to black, then time skip
-- Graphic detail → emotional focus
-- Keep the passion, skip the mechanics
-
-RULES:
-1. Return ONLY the cleaned text - no explanations
-2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
-4. Preserve emotional intensity while removing explicit content
-
-Text to clean:
-"""
-
-    else:  # Level 4 (R) or 5 (Unrated) - no filtering needed
+    if target_sexual >= 4:  # R or Unrated - no filtering needed
         return """You are reviewing content. The target allows ALL adult content.
 
 NO FILTERING REQUIRED - Return the text exactly as-is.
 
 Text to return unchanged:
 """
-
-
-def build_violence_cleaning_prompt(target_violence: int) -> str:
-    """Build a focused prompt for violence content cleaning.
     
-    Uses movie rating board approach - principle-based, not prescriptive lists.
-    """
-    
-    if target_violence == 1:  # G rating
-        return """You are cleaning violent content to achieve a G (General Audiences) rating.
+    return f"""You are cleaning romantic/sensual content to achieve a {rating_name} rating.
 
-Think like a movie rating board: G means Disney animated film level - no real violence.
+Think like an MPAA movie rating board. Your job is to edit this text so it would fit in a {rating_name}-rated film.
 
-THE TEST: Would this violence appear in a G-rated animated film?
-- If NO → Remove or convert to verbal conflict
-- If YES → Keep it
-
-G-RATED CONFLICT LOOKS LIKE:
-- Verbal arguments, disagreements
-- Cartoon-style mishaps (pratfalls, no real injury)
-- Non-violent competition
-- Characters being upset or frustrated
-
-WHAT MUST GO:
-- Physical fighting of any kind
-- Weapons (even mentioned)
-- Injuries, blood, pain
-- Death (even implied)
+THE QUESTION: If this scene were in a movie, would it get a {rating_name} rating or higher?
+- If it would get {rating_name} or lower → KEEP IT
+- If it would get a higher rating → REMOVE or REWRITE IT
 
 CLEANING APPROACH:
-- Physical conflict → verbal/emotional conflict
-- "They fought" → "They argued"
-- Violence → consequences removed or implied differently
+- Remove content that exceeds the {rating_name} threshold
+- You may replace explicit scenes with brief neutral summaries ("They spent time together.")
+- You may use "fade to black" transitions ("Later that evening...")
+- When in doubt about whether something is {rating_name}-appropriate, remove it
+
+REMEMBER: Poetic or metaphorical descriptions of sex are still descriptions of sex. 
+A beautifully written sex scene is still a sex scene - clean it accordingly.
 
 RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
 4. When uncertain, remove it
 
 Text to clean:
 """
 
-    elif target_violence == 2:  # PG rating
-        return """You are cleaning violent content to achieve a PG (Parental Guidance) rating.
 
-Think like a movie rating board: PG means family adventure level - mild action, no graphic harm.
-
-THE TEST: Would this violence work in a PG family adventure movie?
-- Conflict and action are fine
-- No blood, no visible injuries, no graphic consequences
-
-PG-RATED VIOLENCE LOOKS LIKE:
-- Action sequences, chase scenes
-- Brief scuffles, pushing/shoving
-- Weapons present (not graphically used)
-- Implied danger without shown harm
-- "Cartoon violence" - action without consequence
-
-WHAT CROSSES THE LINE:
-- Blood visible
-- Injuries described (wounds, broken bones)
-- Pain experienced in detail
-- Death shown (can be implied/off-screen)
-- Graphic blow-by-blow fighting
-
-CLEANING APPROACH:
-- Keep the action, remove graphic consequences
-- Injury detail → vague acknowledgment
-- Blood → remove or replace with "hurt"
-
-RULES:
-1. Return ONLY the cleaned text - no explanations
-2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
-4. Keep action and tension, remove graphic results
-
-Text to clean:
-"""
-
-    elif target_violence == 3:  # PG-13 rating
-        return """You are cleaning violent content to achieve a PG-13 rating.
-
-Think like a movie rating board: PG-13 means action movie level - Marvel, teen adventure, war films.
-
-THE TEST: Would this violence work in a PG-13 action movie?
-- Combat, fighting, blood mentioned briefly = OK
-- Graphic gore, torture, sadistic detail = NOT OK
-
-PG-13 VIOLENCE LOOKS LIKE:
-- Full combat and battle scenes
-- Blood acknowledged (not dwelt on)
-- Injuries and death shown
-- Weapons used in action
-- Stakes and consequences are real
-
-WHAT CROSSES THE LINE:
-- Graphic gore (visible organs, extreme wounds)
-- Torture with detail
-- Sadistic enjoyment of violence
-- Prolonged suffering
-- Extremely graphic death descriptions
-
-CLEANING APPROACH:
-- Keep action and stakes
-- Reduce graphic gore to brief acknowledgment
-- Torture scenes → summarize outcome
-
-RULES:
-1. Return ONLY the cleaned text - no explanations
-2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
-3. PRESERVE FORMATTING MARKERS: Keep [I]...[/I] (italics), [B]...[/B] (bold), and similar markup exactly as they appear
-4. Preserve intensity, reduce graphic detail
-
-Text to clean:
-"""
-
-    else:  # Level 4 (R) or 5 (Unrated) - no filtering needed
+def build_violence_cleaning_prompt(target_violence: int) -> str:
+    """Build a focused prompt for violence content cleaning.
+    
+    Uses MPAA rating standards - trusts LLM knowledge rather than prescriptive lists.
+    """
+    rating_name = LEVEL_TO_RATING.get(target_violence, 'R')
+    
+    if target_violence >= 4:  # R or Unrated - no filtering needed
         return """You are reviewing content. The target allows ALL violent content.
 
 NO FILTERING REQUIRED - Return the text exactly as-is.
 
 Text to return unchanged:
+"""
+    
+    return f"""You are cleaning violent content to achieve a {rating_name} rating.
+
+Think like an MPAA movie rating board. Your job is to edit this text so it would fit in a {rating_name}-rated film.
+
+THE QUESTION: If this scene were in a movie, would it get a {rating_name} rating or higher?
+- If it would get {rating_name} or lower → KEEP IT
+- If it would get a higher rating → REMOVE or REWRITE IT
+
+CLEANING APPROACH:
+- Remove graphic details that exceed the {rating_name} threshold
+- You may summarize violent events briefly ("A fight broke out.")
+- Keep tension and stakes, reduce graphic detail
+- When in doubt about whether something is {rating_name}-appropriate, remove it
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
+4. When uncertain, remove it
+
+Text to clean:
 """
 
 
@@ -2485,7 +2352,10 @@ def _verify_single_chapter(args: tuple) -> tuple:
 
 
 def _create_chapter_change_blocks(args: tuple) -> tuple:
-    """Worker function to create change blocks for content needing cleaning in a chapter.
+    """Worker function to create change blocks for ALL paragraphs in a chapter.
+    
+    Creates change blocks for every paragraph with LLM ratings stored.
+    Paragraphs that exceed targets are marked as 'pending', others as 'ok'.
     
     Used by cmd_clean_passes for the new cleaning pipeline.
     
@@ -2510,51 +2380,69 @@ def _create_chapter_change_blocks(args: tuple) -> tuple:
     adult_indices = set()
     violence_indices = set()
     
-    # Use LLM to identify paragraphs needing cleaning (language, adult, or violence)
-    if chapter.needs_language_cleaning or chapter.needs_adult_cleaning or chapter.needs_violence_cleaning:
-        chunk_size = 8
-        for chunk_idx in range((len(paragraphs) + chunk_size - 1) // chunk_size):
-            start = chunk_idx * chunk_size
-            end = min(start + chunk_size, len(paragraphs))
-            chunk = paragraphs[start:end]
+    # Store ratings for each paragraph (index -> rating dict)
+    paragraph_ratings = {}
+    
+    # Rate ALL paragraphs to get MPAA ratings for each
+    chunk_size = 8
+    for chunk_idx in range((len(paragraphs) + chunk_size - 1) // chunk_size):
+        start = chunk_idx * chunk_size
+        end = min(start + chunk_size, len(paragraphs))
+        chunk = paragraphs[start:end]
+        
+        try:
+            # Get full ratings for each paragraph
+            chunk_ratings = worker_client.rate_paragraphs(
+                chunk, 
+                target_sexual, 
+                target_violence,
+                language_words=language_words
+            )
             
-            try:
-                # Identify paragraphs needing cleaning - pass language_words for dynamic detection
-                needs_clean_indices = worker_client.identify_paragraphs_to_clean(
-                    chunk, 
-                    target_sexual, 
-                    target_violence,
-                    language_words=language_words
-                )
+            for idx, rating in enumerate(chunk_ratings):
+                abs_idx = start + idx
+                paragraph_ratings[abs_idx] = rating
                 
-                for idx in needs_clean_indices:
-                    abs_idx = start + idx
-                    # Assign to appropriate indices based on chapter cleaning needs
-                    if chapter.needs_language_cleaning:
-                        lang_indices.add(abs_idx)
-                    if chapter.needs_adult_cleaning:
-                        adult_indices.add(abs_idx)
-                    if chapter.needs_violence_cleaning:
-                        violence_indices.add(abs_idx)
-                        
-            except Exception as e:
-                if verbose:
-                    thread_safe_print(f"[W{worker_id}]   Error rating chunk: {e}")
+                # Track which paragraphs exceed targets
+                if rating['exceeds_language']:
+                    lang_indices.add(abs_idx)
+                if rating['exceeds_sexual']:
+                    adult_indices.add(abs_idx)
+                if rating['exceeds_violence']:
+                    violence_indices.add(abs_idx)
+                    
+        except Exception as e:
+            if verbose:
+                thread_safe_print(f"[W{worker_id}]   Error rating chunk: {e}")
+            # If rating fails, use defaults (G/G/NO) for this chunk
+            for idx in range(len(chunk)):
+                abs_idx = start + idx
+                paragraph_ratings[abs_idx] = {
+                    'sexual': 'G', 'violence': 'G', 'language': False,
+                    'exceeds_sexual': False, 'exceeds_violence': False, 'exceeds_language': False
+                }
     
-    # Create change blocks for each identified paragraph
-    all_flagged = lang_indices | adult_indices | violence_indices
-    if not all_flagged:
-        thread_safe_print(f"[W{worker_id}]   No paragraphs flagged for cleaning")
-        return (chapter_idx, lang_indices, adult_indices, violence_indices, None, None)
-    
-    # Build new content with change blocks
+    # Build new content with change blocks for ALL paragraphs
     new_content = []
     change_num = 1
+    all_flagged = lang_indices | adult_indices | violence_indices
     
     for idx, para in enumerate(paragraphs):
-        if idx in all_flagged:
-            new_content.append('')
-            new_content.append(f'#CHANGE: {chapter.number}.{change_num}')
+        rating = paragraph_ratings.get(idx, {
+            'sexual': 'G', 'violence': 'G', 'language': False,
+            'exceeds_sexual': False, 'exceeds_violence': False, 'exceeds_language': False
+        })
+        
+        needs_cleaning = idx in all_flagged
+        
+        new_content.append('')
+        new_content.append(f'#CHANGE: {chapter.number}.{change_num}')
+        
+        # Store the LLM's rating
+        lang_str = 'YES' if rating['language'] else 'NO'
+        new_content.append(f"#LLM_RATING: LANG={lang_str} SEXUAL={rating['sexual']} VIOLENCE={rating['violence']}")
+        
+        if needs_cleaning:
             new_content.append('#STATUS: pending')
             
             if idx in lang_indices:
@@ -2569,12 +2457,16 @@ def _create_chapter_change_blocks(args: tuple) -> tuple:
             new_content.append('#CLEANED')
             new_content.append('')
             new_content.append('#END')
-            change_num += 1
         else:
-            new_content.append('')
+            new_content.append('#STATUS: ok')
+            new_content.append('#ORIGINAL')
             new_content.append(para)
+            new_content.append('#END')
+        
+        change_num += 1
     
     stats = []
+    stats.append(f"{len(paragraphs)} total")
     if lang_indices:
         stats.append(f"{len(lang_indices)} lang")
     if adult_indices:
@@ -2772,19 +2664,24 @@ def cmd_clean_passes(bw: BookWashFile, client: GeminiClient, filepath: Path,
                     thread_safe_print(f"  Worker exception for chapter {chapter_idx}: {e}")
         
         # Apply results to chapters (sequential for thread safety)
+        total_pending = 0
         for chapter_idx, (lang_indices, adult_indices, violence_indices, new_content) in results.items():
             chapter = bw.chapters[chapter_idx]
             if new_content:
                 chapter.content_lines = new_content
-                total_changes += len(lang_indices | adult_indices | violence_indices)
+                pending_count = len(lang_indices | adult_indices | violence_indices)
+                total_changes += len([l for l in new_content if l.startswith('#CHANGE:')])
+                total_pending += pending_count
+                # Set pending_cleaning based on whether any blocks need cleaning
+                chapter.pending_cleaning = True if pending_count > 0 else False
             else:
-                # No paragraphs flagged
+                # No content generated (empty chapter)
                 chapter.pending_cleaning = None
     
     # Save after identification
     write_bookwash(bw, filepath)
     phase_times['identify'] = time.time() - identify_start
-    print(f"\n✓ Saved after identification ({total_changes} change blocks) [{phase_times['identify']:.1f}s]")
+    print(f"\n✓ Saved after identification ({total_changes} change blocks, {total_pending} need cleaning) [{phase_times['identify']:.1f}s]")
     print()
     
     # === PASS 1: LANGUAGE CLEANING (Parallel) ===
@@ -2980,11 +2877,6 @@ def cmd_clean_passes(bw: BookWashFile, client: GeminiClient, filepath: Path,
     
     phase_times['violence'] = time.time() - violence_start
     print(f"  Cleaned {violence_cleaned} violence blocks ({violence_fallback_used} used fallback) [{phase_times['violence']:.1f}s]")
-    
-    # Remove change blocks where ORIGINAL == CLEANED (false positives)
-    removed = _remove_identical_change_blocks(bw)
-    if removed > 0:
-        print(f"  🧹 Removed {removed} identical change blocks (false positives)")
     
     # Remove any orphaned cleaning markers that ended up outside change blocks
     orphaned = _remove_orphaned_cleaning_markers(bw)
