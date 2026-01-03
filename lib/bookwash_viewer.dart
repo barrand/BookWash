@@ -621,7 +621,7 @@ class _BookWashViewerState extends State<BookWashViewer> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Rating: L=${chapter.rating?.language ?? "?"} S=${chapter.rating?.sexual ?? "?"} V=${chapter.rating?.violence ?? "?"}',
+                      'Lang=${chapter.rating?.origLanguage ?? "?"} Adult=${chapter.rating?.origAdult ?? "?"} Violence=${chapter.rating?.origViolence ?? "?"}',
                       style: TextStyle(fontSize: 12, color: Colors.grey[400]),
                     ),
                   ],
