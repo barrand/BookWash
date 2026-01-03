@@ -1,0 +1,235 @@
+
+============================================================
+CHAPTER RATING PROMPT
+Logged: 01/02/26 11:19am MT
+============================================================
+
+Analyze the following text and rate it for content.
+
+Categories:
+
+1. LANGUAGE (profanity, offensive words)
+   The user wants to detect these specific words: bummer, damn, hell, crap, ass, piss, shit, bitch, bastard, asshole, bullshit, fuck, motherfucker, goddamn, jesus christ, oh my god
+   
+   Look for these words OR any similarly offensive profanity/slurs:
+   - Include variations: shit → sh*t, shite, shitty
+   - Include misspellings: fuck → fuk, fuuck
+   - Include compounds: bullshit, motherfucker, goddamn
+   - Include similar severity: if 'bitch' is listed, also detect 'slut', 'son of a bitch'
+   
+   ⚠️ EXCEPTION - LEGITIMATE/PROPER USES (do NOT flag these):
+   - "bastard" meaning illegitimate child - NEVER FLAG when referring to illegitimate birth:
+     • "born a bastard", "the king's bastard", "his bastard", "[name]'s bastard", "fathered a bastard"
+     • "I'm a bastard", "I'm his bastard", "You're a bastard" (when discussing parentage)
+     • "the bastard son", "a bastard child", "Gavin's bastard", "Kip was Gavin's bastard"
+     • Context clue: if discussing parentage, lineage, birth status, or social shame of illegitimacy → DO NOT FLAG
+   - "bitch" meaning female dog (e.g., "the bitch and her puppies", "a hunting bitch")
+   - "ass" meaning donkey (e.g., "rode an ass", "stubborn as an ass")
+   - "damn" meaning to condemn (e.g., "damn his soul", "damned to hell" in religious context), or physical construction for retaining water (e.g., "the damn held back the river")
+   - "hell" as a place (e.g., "descended into hell", "the fires of hell")
+   - "prick" meaning to pierce (e.g., "pricked her finger", "prick of a needle")
+   - "cock" meaning rooster (e.g., "the cock crowed", "cockfight")
+   
+   Only flag words used as profanity, insults, or crude slang - NOT their literal meanings.
+   
+   Respond with YES if ANY profane uses are found, NO if the text is clean.
+
+2. SEXUAL CONTENT - Use MPAA film rating standards:
+   - G: No romance. Content suitable for young children.
+   - PG: Light romance (hand-holding, quick innocent kiss). Nothing that would make a parent uncomfortable.
+   - PG-13: Passionate kissing, implied intimacy, fade-to-black. The camera cuts away before anything explicit.
+   - R: Sexual content that would get a film an R rating. Descriptive intimate scenes, even if poetic/metaphorical.
+   - X: Explicit, graphic sexual content.
+
+   CRITICAL: Authors often describe sex through metaphor, poetry, or fragmented prose.
+   If it's clearly describing sex artistically → rate it R.
+   Poetic language does not reduce the rating.
+
+3. VIOLENCE - Use MPAA film rating standards:
+   - G: No physical violence (arguments only)
+   - PG: Mild action, brief scuffles, no blood
+   - PG-13: Combat, injuries, some blood, weapon use
+   - R: Graphic injury detail, notable gore, intense violence
+   - X: Extreme gore/torture, sadistic detail
+
+4. DESCRIPTION: Provide a 2-3 sentence summary of what happens in this chapter.
+   Focus on plot events and character interactions. This will help provide context for content editing.
+
+Respond in EXACTLY this format (one rating per line):
+LANGUAGE: [YES or NO]
+SEXUAL: [G, PG, PG-13, R, or X]
+VIOLENCE: [G, PG, PG-13, R, or X]
+DESCRIPTION: [2-3 sentence summary of chapter events]
+
+Text to analyze:
+
+
+============================================================
+CHUNK IDENTIFICATION PROMPT
+Logged: 01/02/26 11:19am MT
+============================================================
+
+Analyze each numbered paragraph and identify which ones contain content that exceeds the target ratings.
+
+⚠️ CRITICAL: When in doubt, FLAG IT. It is much better to flag a paragraph that might be fine than to miss one that needs cleaning. False positives are acceptable; false negatives are not.
+
+RATING SCALE DEFINITIONS:
+
+LANGUAGE CONTENT DETECTION:
+The user wants to filter these specific words: bummer, damn, hell, crap, ass, piss, shit, bitch, bastard, asshole, bullshit, fuck, motherfucker, goddamn, jesus christ, oh my god
+Flag any paragraph containing these words OR any similarly offensive profanity/slurs.
+
+Include variations, misspellings, and words of similar offensiveness level.
+For example, if 'shit' is listed, also flag 'sh*t', 'shite', 'crap', etc.
+
+SEXUAL CONTENT - Use MPAA film rating standards:
+- G: No romance. Content suitable for young children.
+- PG: Light romance (hand-holding, quick innocent kiss). Nothing that would make a parent uncomfortable.
+- PG-13: Passionate kissing, implied intimacy, fade-to-black. The camera cuts away before anything explicit.
+- R: Sexual content that would get a film an R rating. Descriptive intimate scenes, even if poetic/metaphorical.
+- NC-17/X: Explicit, graphic sexual content.
+
+CRITICAL: Authors often describe sex through metaphor, poetry, or fragmented prose rather than explicit terms. 
+If you're reading a scene and thinking "this is clearly describing sex, just artistically" → rate it R.
+Poetic language does not reduce the rating. A sex scene written beautifully is still a sex scene.
+
+VIOLENCE:
+- G: No physical violence (arguments only)
+- PG: Mild action, non-detailed scuffles, no blood
+- PG-13: Combat, injuries, some blood, weapon use without gore detail
+- R: Graphic injury detail, notable gore, intense sustained violence
+- X: Extreme gore/torture, sadistic detail
+
+TARGET RATINGS (content must be at or BELOW these levels):
+- Language: (based on word list above)
+- Sexual: PG
+- Violence: R
+
+IMPORTANT: Words like "shit", "bullshit", "fuck", "fucking" are R-level!
+
+For each paragraph that EXCEEDS any target rating, list its number.
+If a paragraph is acceptable, do NOT list it.
+
+Respond with ONLY the paragraph numbers that need cleaning (one per line), or "NONE" if all paragraphs are acceptable.
+
+Example response:
+1
+3
+
+Text to analyze:
+[Paragraphs are numbered [1], [2], etc. and sent in chunks of 8]
+
+
+============================================================
+LANGUAGE CLEANING PROMPT
+Logged: 01/02/26 11:19am MT
+============================================================
+
+You are cleaning offensive language from a book. Your task is to replace specific words and slurs.
+
+CHAPTER CONTEXT: Marcus informs Jake he is leaving their startup to join Google, citing financial reasons and a better salary. This news leads to the other two co-founders quitting the next day, leaving Jake alone with a half-finished product and dwindling funds. Jake expresses his despair to Amy, who suggests he shut down the company, but he refuses, seeing the startup as his identity.
+Use this context to understand the scene and make appropriate word replacements that maintain narrative flow.
+
+
+SPECIFIC WORDS TO REMOVE: bummer, damn, hell, crap, ass, piss, shit, bitch, bastard, asshole, bullshit, fuck, motherfucker, goddamn, jesus christ, oh my god
+
+CRITICAL RULES:
+1. Return ONLY the cleaned sentence - no explanations, no commentary
+2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions. If a line break occurs mid-sentence, keep it there.
+3. DO NOT change anything else - keep all other content identical
+4. Narrative descriptions like "he cursed" or "she swore" are ALLOWED - only remove actual offensive words
+
+⚠️ FORMATTING TAGS - CRITICAL ⚠️
+5. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
+   - If the original word has NO tags around it, the replacement must have NO tags
+   - WRONG: "hell" → "[B]heck[/B]" (added tags that weren't there!)
+   - CORRECT: "hell" → "heck" (no tags added)
+   - WRONG: "son of a bitch" → "[B]scoundrel[/B]" (added tags!)
+   - CORRECT: "son of a bitch" → "scoundrel" (no tags)
+   - Only PRESERVE existing tags: "[I]damn[/I]" → "[I]darn[/I]" (kept existing tags)
+
+SENTENCE REPAIR (VERY IMPORTANT):
+- NEVER leave a sentence starting with just "It," or "This," - that is broken grammar
+- If a profane word starts a sentence like "Fuck this" or "Fuck it", you MUST rewrite the ENTIRE sentence
+- Examples of BROKEN output to AVOID:
+  - "It," he muttered  ← WRONG
+  - "This," he screamed ← WRONG
+- Correct rewrites:
+  - "Fuck it" → "Whatever" or "Forget it" or "I don't care" or remove the sentence
+  - "Fuck this" → "I'm done with this" or "This is pointless" or remove
+  - "Fuck everything" → "I hate everything" or "Everything is terrible" or remove
+
+REPLACEMENT GUIDANCE:
+
+SEVERE PROFANITY (fuck, motherfucker, cunt):
+   - Remove entirely OR rephrase the sentence to convey emotion without the word
+   - "What the fuck?" → "What?" or "What is going on?"
+   - "Fuck you!" → Remove the line, or "Get away from me!"
+   - "fucking idiot" → "complete idiot" or just "idiot"
+   - "motherfucker" → Remove entirely
+
+STRONG PROFANITY (shit, bitch, bastard, asshole, bullshit):
+   - "shit" → "crud" or remove ("Oh shit!" → "Oh no!")
+   - "bullshit" → "nonsense" or "ridiculous"
+   - "bitch" → "jerk", "idiot", "sissy" or remove
+   - "bastard" → "jerk" or "scoundrel"
+   - "asshole" → "jerk", "fool", "dork" or remove
+   - "son of a bitch" → remove entirely
+
+MODERATE PROFANITY (damn, hell, crap, ass):
+   - "damn" → "curses" or remove ("Damn it!" → "Darn it!" or just remove)
+   - "hell" → rephrase ("What the hell" → "What on earth")
+   - "crap" → "crud" or "junk"
+   - "ass" → "butt" or "rear" or remove
+
+BLASPHEMOUS EXPRESSIONS (goddamn, jesus christ as expletive, oh my god):
+   - "goddamn" → "goodness" or remove
+   - "Jesus Christ!" (as expletive) → "Good grief!" or remove
+   - "Oh my god!" (as expletive) → "Oh my!" or "Oh my goodness!"
+   - Keep genuine religious usage (prayer, worship) unchanged
+
+GENERAL PRINCIPLES:
+- Preserve the emotional intensity when possible
+- If a word is used for emphasis, the replacement should carry similar weight
+- When removing a word leaves awkward phrasing, REWRITE the sentence to be grammatically correct
+- Don't add new ideas, but DO fix broken grammar caused by word removal
+
+Text to clean:
+
+
+
+============================================================
+ADULT CLEANING PROMPT
+Logged: 01/02/26 11:19am MT
+============================================================
+
+You are cleaning romantic/sensual content to achieve a PG rating.
+
+CHAPTER CONTEXT: Jake, a struggling entrepreneur, finds solace at Platinum Rose, a club, where he develops a connection with Sophia, a dancer working to pay for her psychology degree. Sophia dances for him and offers him comfort and encouragement, making him feel seen and understood. This interaction provides Jake with a much-needed emotional escape, even though he acknowledges it's a transaction.
+Use this context to understand the scene and make appropriate edits that maintain narrative flow.
+
+
+Think like an MPAA movie rating board. Your job is to edit this text so it would fit in a PG-rated film.
+
+THE QUESTION: If this scene were in a movie, would it get a PG rating or higher?
+- If it would get PG or lower → KEEP IT
+- If it would get a higher rating → REMOVE or REWRITE IT
+
+CLEANING APPROACH:
+- Remove content that exceeds the PG threshold
+- You may replace explicit scenes with brief neutral summaries ("They spent time together.")
+- You may use "fade to black" transitions ("Later that evening...")
+- When in doubt about whether something is PG-appropriate, remove it
+
+REMEMBER: Poetic or metaphorical descriptions of sex are still descriptions of sex. 
+A beautifully written sex scene is still a sex scene - clean it accordingly.
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve paragraph structure - keep the same number of paragraphs, separated by blank lines
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
+4. When uncertain, remove it
+
+Text to clean:
+
+
