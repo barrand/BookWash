@@ -1,7 +1,7 @@
 
 ============================================================
 CHAPTER RATING PROMPT
-Logged: 01/02/26 11:19am MT
+Logged: 01/04/26 12:42am MT
 ============================================================
 
 Analyze the following text and rate it for content.
@@ -65,79 +65,24 @@ Text to analyze:
 
 
 ============================================================
-CHUNK IDENTIFICATION PROMPT
-Logged: 01/02/26 11:19am MT
-============================================================
-
-Analyze each numbered paragraph and identify which ones contain content that exceeds the target ratings.
-
-⚠️ CRITICAL: When in doubt, FLAG IT. It is much better to flag a paragraph that might be fine than to miss one that needs cleaning. False positives are acceptable; false negatives are not.
-
-RATING SCALE DEFINITIONS:
-
-LANGUAGE CONTENT DETECTION:
-The user wants to filter these specific words: bummer, damn, hell, crap, ass, piss, shit, bitch, bastard, asshole, bullshit, fuck, motherfucker, goddamn, jesus christ, oh my god
-Flag any paragraph containing these words OR any similarly offensive profanity/slurs.
-
-Include variations, misspellings, and words of similar offensiveness level.
-For example, if 'shit' is listed, also flag 'sh*t', 'shite', 'crap', etc.
-
-SEXUAL CONTENT - Use MPAA film rating standards:
-- G: No romance. Content suitable for young children.
-- PG: Light romance (hand-holding, quick innocent kiss). Nothing that would make a parent uncomfortable.
-- PG-13: Passionate kissing, implied intimacy, fade-to-black. The camera cuts away before anything explicit.
-- R: Sexual content that would get a film an R rating. Descriptive intimate scenes, even if poetic/metaphorical.
-- NC-17/X: Explicit, graphic sexual content.
-
-CRITICAL: Authors often describe sex through metaphor, poetry, or fragmented prose rather than explicit terms. 
-If you're reading a scene and thinking "this is clearly describing sex, just artistically" → rate it R.
-Poetic language does not reduce the rating. A sex scene written beautifully is still a sex scene.
-
-VIOLENCE:
-- G: No physical violence (arguments only)
-- PG: Mild action, non-detailed scuffles, no blood
-- PG-13: Combat, injuries, some blood, weapon use without gore detail
-- R: Graphic injury detail, notable gore, intense sustained violence
-- X: Extreme gore/torture, sadistic detail
-
-TARGET RATINGS (content must be at or BELOW these levels):
-- Language: (based on word list above)
-- Sexual: PG
-- Violence: R
-
-IMPORTANT: Words like "shit", "bullshit", "fuck", "fucking" are R-level!
-
-For each paragraph that EXCEEDS any target rating, list its number.
-If a paragraph is acceptable, do NOT list it.
-
-Respond with ONLY the paragraph numbers that need cleaning (one per line), or "NONE" if all paragraphs are acceptable.
-
-Example response:
-1
-3
-
-Text to analyze:
-[Paragraphs are numbered [1], [2], etc. and sent in chunks of 8]
-
-
-============================================================
 LANGUAGE CLEANING PROMPT
-Logged: 01/02/26 11:19am MT
+Logged: 01/04/26 12:43am MT
 ============================================================
 
-You are cleaning offensive language from a book. Your task is to replace specific words and slurs.
-
-CHAPTER CONTEXT: Marcus informs Jake he is leaving their startup to join Google, citing financial reasons and a better salary. This news leads to the other two co-founders quitting the next day, leaving Jake alone with a half-finished product and dwindling funds. Jake expresses his despair to Amy, who suggests he shut down the company, but he refuses, seeing the startup as his identity.
-Use this context to understand the scene and make appropriate word replacements that maintain narrative flow.
+You are cleaning offensive language from a book. Your task is to replace specific words and slurs in a natural way that meets the narrative of the chapter while erring on the side of removing offensive content.
+[CONTEXT FOR REFERENCE - DO NOT INCLUDE IN OUTPUT]
+Chapter: The narrator and his companions are drawn to a clearing by the singing of a naked woman named Felurian. While some of the companions are fearful and resist, the narrator, inspired by his identity and a sense of opportunity, decides to enter the clearing. He is captivated by Felurian's beauty and the magical pull of her song.
+[END CONTEXT]
 
 
 SPECIFIC WORDS TO REMOVE: bummer, damn, hell, crap, ass, piss, shit, bitch, bastard, asshole, bullshit, fuck, motherfucker, goddamn, jesus christ, oh my god
 
 CRITICAL RULES:
-1. Return ONLY the cleaned sentence - no explanations, no commentary
+1. Return the COMPLETE cleaned text - ALL paragraphs, and the changed sections
 2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions. If a line break occurs mid-sentence, keep it there.
 3. DO NOT change anything else - keep all other content identical
 4. Narrative descriptions like "he cursed" or "she swore" are ALLOWED - only remove actual offensive words
+5. You are doing LANGUAGE CLEANING only - never delete paragraphs or sentences (except profane words within them)
 
 ⚠️ FORMATTING TAGS - CRITICAL ⚠️
 5. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
@@ -200,13 +145,13 @@ Text to clean:
 
 ============================================================
 ADULT CLEANING PROMPT
-Logged: 01/02/26 11:19am MT
+Logged: 01/04/26 12:43am MT
 ============================================================
 
 You are cleaning romantic/sensual content to achieve a PG rating.
-
-CHAPTER CONTEXT: Jake, a struggling entrepreneur, finds solace at Platinum Rose, a club, where he develops a connection with Sophia, a dancer working to pay for her psychology degree. Sophia dances for him and offers him comfort and encouragement, making him feel seen and understood. This interaction provides Jake with a much-needed emotional escape, even though he acknowledges it's a transaction.
-Use this context to understand the scene and make appropriate edits that maintain narrative flow.
+[CONTEXT FOR REFERENCE - DO NOT INCLUDE IN OUTPUT]
+Chapter: The narrator and his companions are drawn to a clearing by the singing of a naked woman named Felurian. While some of the companions are fearful and resist, the narrator, inspired by his identity and a sense of opportunity, decides to enter the clearing. He is captivated by Felurian's beauty and the magical pull of her song.
+[END CONTEXT]
 
 
 Think like an MPAA movie rating board. Your job is to edit this text so it would fit in a PG-rated film.
@@ -228,8 +173,114 @@ RULES:
 1. Return ONLY the cleaned text - no explanations
 2. Preserve paragraph structure - keep the same number of paragraphs, separated by blank lines
 3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
-4. When uncertain, remove it
+4. DO NOT ADD chapter numbers, "Chapter X", or any headers that aren't in the original text
+5. When uncertain, remove it
 
 Text to clean:
+
+
+
+============================================================
+VIOLENCE CLEANING PROMPT
+Logged: 01/04/26 12:43am MT
+============================================================
+
+You are cleaning violent content to achieve a PG rating.
+[CONTEXT FOR REFERENCE - DO NOT INCLUDE IN OUTPUT]
+Chapter: The narrator, Kvothe, struggles against a powerful enchantment or influence from Felurian that is overriding his will and desires. Despite intense physical and mental resistance, he finds himself drawn to her, experiencing overwhelming lust and hunger. Ultimately, Kvothe's internal struggle culminates in a moment of surrender, where something in his mind breaks.
+[END CONTEXT]
+
+
+Think like an MPAA movie rating board. Your job is to edit this text so it would fit in a PG-rated film.
+
+THE QUESTION: If this scene were in a movie, would it get a PG rating or higher?
+- If it would get PG or lower → KEEP IT
+- If it would get a higher rating → REMOVE or REWRITE IT
+
+CLEANING APPROACH:
+- Remove graphic details that exceed the PG threshold
+- You may summarize violent events briefly ("A fight broke out.")
+- Keep tension and stakes, reduce graphic detail
+- When in doubt about whether something is PG-appropriate, remove it
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve paragraph structure - keep the same number of paragraphs, separated by blank lines
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
+4. DO NOT ADD chapter numbers, "Chapter X", or any headers that aren't in the original text
+5. When uncertain, remove it
+
+Text to clean:
+
+
+
+============================================================
+AGGRESSIVE ADULT CLEANING PROMPT
+Logged: 01/04/26 12:43am MT
+============================================================
+
+⚠️ AGGRESSIVE CLEANING MODE - This content FAILED normal cleaning. Be EXTREMELY strict.
+
+Your job is to COMPLETELY REMOVE all sexual/sensual content and replace with brief summaries.
+
+🚨 CRITICAL: YOUR OUTPUT MUST BE DIFFERENT FROM THE INPUT 🚨
+This text was already sent for cleaning and came back unchanged. That was WRONG.
+You MUST modify this text. Returning it unchanged is NOT acceptable.
+
+AGGRESSIVE RULES:
+1. ANY description of bodies, touching, kissing, or physical intimacy → REMOVE entirely
+2. ANY suggestive dialogue or innuendo → REMOVE entirely  
+3. Replace removed content with a brief summary of what happened
+4. When in doubt → REMOVE IT. Better to lose content than keep anything questionable.
+5. This should be safe for a 10-year-old to read.
+6. DO NOT ADD chapter numbers, "Chapter X", or any headers that aren't in the original text.
+7. MATCH the narrative voice of the input. If the input uses "I", your output uses "I".
+
+SPECIFIC PHRASES THAT MUST BE REMOVED (examples):
+- "clutch her hips" → sexual, REMOVE
+- "our rhythm" → sexual metaphor, REMOVE  
+- "she writhes" → sexual, REMOVE
+- "astride me" → sexual position, REMOVE
+- "her motion slows" (in sexual context) → REMOVE
+- Any mention of bodies moving together rhythmically → REMOVE
+
+DO NOT try to preserve the scene's mood or tension. Just summarize what happened plot-wise.
+If the input is describing a sex scene, your output should be 1-2 sentences like "They were together."
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. It's OK to drastically shorten the text
+3. DO NOT ADD [B], [I], or any formatting tags
+
+Text to aggressively clean:
+
+
+
+============================================================
+AGGRESSIVE VIOLENCE CLEANING PROMPT
+Logged: 01/04/26 12:43am MT
+============================================================
+
+⚠️ AGGRESSIVE CLEANING MODE - This content failed normal cleaning. Be EXTREMELY strict.
+
+Your job is to COMPLETELY REMOVE all graphic violence and replace with brief summaries.
+
+AGGRESSIVE RULES:
+1. ANY description of blood, wounds, pain, or injury → REMOVE entirely
+2. ANY blow-by-blow fight choreography → Summarize briefly
+3. ANY torture, abuse, or graphic suffering → Remove, summarize briefly
+4. When in doubt → REMOVE IT. Better to lose content than keep anything graphic.
+5. This should be safe for a 10-year-old to read.
+6. DO NOT ADD chapter numbers, "Chapter X", or any headers that aren't in the original text.
+7. MATCH the narrative voice of the input. If the input uses "I", your output uses "I".
+
+DO NOT try to preserve tension or stakes. Just summarize what happened plot-wise.
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. It's OK to drastically shorten the text
+3. DO NOT ADD [B], [I], or any formatting tags
+
+Text to aggressively clean:
 
 
