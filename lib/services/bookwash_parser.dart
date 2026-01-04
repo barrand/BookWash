@@ -37,7 +37,15 @@ class BookWashParser {
           for (final pair in settingsStr.split(' ')) {
             if (pair.contains('=')) {
               final kv = pair.split('=');
-              bookwash.settings[kv[0]] = int.tryParse(kv[1]) ?? 0;
+              final key = kv[0];
+              final value = kv[1];
+              // Store as-is (rating names like 'PG' or booleans like 'true')
+              if (key == 'clean_language') {
+                bookwash.settings[key] = value.toLowerCase() == 'true';
+              } else {
+                // For target_adult, target_violence - store the rating name
+                bookwash.settings[key] = value;
+              }
             }
           }
         } else if (line.startsWith('#ASSETS:')) {
@@ -112,29 +120,23 @@ class BookWashParser {
           currentChapter.title = line.substring(7).trim();
         } else if (line.startsWith('#FILE:')) {
           currentChapter.file = line.substring(6).trim();
-        } else if (line.startsWith('#RATING:')) {
-          final ratingStr = line.substring(8).trim();
-          final rating = ChapterRating();
-          for (final pair in ratingStr.split(' ')) {
-            if (pair.contains('=')) {
-              final kv = pair.split('=');
-              switch (kv[0]) {
-                case 'language':
-                  rating.language = kv[1];
-                  break;
-                case 'sexual':
-                  rating.sexual = kv[1];
-                  break;
-                case 'violence':
-                  rating.violence = kv[1];
-                  break;
-              }
-            }
-          }
-          currentChapter.rating = rating;
-        } else if (line.startsWith('#NEEDS_CLEANING:')) {
-          currentChapter.needsCleaning =
-              line.substring(16).trim().toLowerCase() == 'true';
+        } else if (line.startsWith('#CHAPTER_DESCRIPTION:')) {
+          currentChapter.description = line.substring(21).trim();
+        } else if (line.startsWith('#ORIG_LANGUAGE:')) {
+          currentChapter.rating ??= ChapterRating();
+          currentChapter.rating!.origLanguage = line.substring(15).trim();
+        } else if (line.startsWith('#ORIG_ADULT:')) {
+          currentChapter.rating ??= ChapterRating();
+          currentChapter.rating!.origAdult = line.substring(12).trim();
+        } else if (line.startsWith('#ORIG_VIOLENCE:')) {
+          currentChapter.rating ??= ChapterRating();
+          currentChapter.rating!.origViolence = line.substring(15).trim();
+        } else if (line.startsWith('#LANGUAGE_STATUS:')) {
+          currentChapter.languageStatus = line.substring(17).trim();
+        } else if (line.startsWith('#ADULT_STATUS:')) {
+          currentChapter.adultStatus = line.substring(14).trim();
+        } else if (line.startsWith('#VIOLENCE_STATUS:')) {
+          currentChapter.violenceStatus = line.substring(17).trim();
         } else if (line.startsWith('#CHANGE:')) {
           // Save previous change
           if (currentChange != null) {
@@ -158,17 +160,13 @@ class BookWashParser {
 
           if (line.startsWith('#STATUS:')) {
             currentChange.status = line.substring(8).trim();
-          } else if (line.startsWith('#REASON:')) {
-            // Legacy: ignore #REASON lines, we build reason from markers
-          } else if (line == '#NEEDS_LANGUAGE_CLEANING') {
-            currentChange.reason +=
-                (currentChange.reason.isEmpty ? '' : ' + ') + 'language';
-          } else if (line == '#NEEDS_ADULT_CLEANING') {
-            currentChange.reason +=
-                (currentChange.reason.isEmpty ? '' : ' + ') + 'adult content';
-          } else if (line == '#NEEDS_VIOLENCE_CLEANING') {
-            currentChange.reason +=
-                (currentChange.reason.isEmpty ? '' : ' + ') + 'violence';
+          } else if (line.startsWith('#CLEANED_FOR:')) {
+            final cleanedForStr = line.substring(13).trim();
+            currentChange.cleanedFor = cleanedForStr
+                .split(',')
+                .map((s) => s.trim())
+                .where((s) => s.isNotEmpty)
+                .toList();
           } else if (line.trim() == '#ORIGINAL') {
             inOriginal = true;
             inCleaned = false;
@@ -274,12 +272,25 @@ class BookWashParser {
         lines.add('#FILE: ${chapter.file}');
       }
 
-      if (chapter.rating != null) {
-        lines.add('#RATING: ${chapter.rating}');
+      if (chapter.description != null && chapter.description!.isNotEmpty) {
+        lines.add('#CHAPTER_DESCRIPTION: ${chapter.description}');
       }
 
-      if (chapter.needsCleaning != null) {
-        lines.add('#NEEDS_CLEANING: ${chapter.needsCleaning}');
+      if (chapter.rating != null) {
+        lines.add('#ORIG_LANGUAGE: ${chapter.rating!.origLanguage}');
+        lines.add('#ORIG_ADULT: ${chapter.rating!.origAdult}');
+        lines.add('#ORIG_VIOLENCE: ${chapter.rating!.origViolence}');
+      }
+
+      // Only write status tags if not 'clean' (default)
+      if (chapter.languageStatus != 'clean') {
+        lines.add('#LANGUAGE_STATUS: ${chapter.languageStatus}');
+      }
+      if (chapter.adultStatus != 'clean') {
+        lines.add('#ADULT_STATUS: ${chapter.adultStatus}');
+      }
+      if (chapter.violenceStatus != 'clean') {
+        lines.add('#VIOLENCE_STATUS: ${chapter.violenceStatus}');
       }
 
       // Process content lines, expanding #CHANGE: markers with full change data
@@ -293,28 +304,11 @@ class BookWashParser {
           final change = changeMap[changeId];
 
           if (change != null) {
-            // First, collect any #NEEDS_*_CLEANING markers from the old block
-            final cleaningMarkers = <String>[];
-            int j = i + 1;
-            while (j < chapter.contentLines.length) {
-              final checkLine = chapter.contentLines[j];
-              if (checkLine == '#NEEDS_LANGUAGE_CLEANING' ||
-                  checkLine == '#NEEDS_ADULT_CLEANING' ||
-                  checkLine == '#NEEDS_VIOLENCE_CLEANING') {
-                cleaningMarkers.add(checkLine);
-              }
-              if (checkLine.trim() == '#ORIGINAL' ||
-                  checkLine.trim() == '#END') {
-                break;
-              }
-              j++;
-            }
-
-            // Write the full change block with current status and preserved markers
+            // Write the full change block with current status
             lines.add('#CHANGE: ${change.id}');
             lines.add('#STATUS: ${change.status}');
-            for (final marker in cleaningMarkers) {
-              lines.add(marker);
+            if (change.cleanedFor.isNotEmpty) {
+              lines.add('#CLEANED_FOR: ${change.cleanedFor.join(', ')}');
             }
             lines.add('#ORIGINAL');
             lines.add(change.original);
@@ -347,6 +341,9 @@ class BookWashParser {
         if (!writtenChangeIds.contains(change.id)) {
           lines.add('#CHANGE: ${change.id}');
           lines.add('#STATUS: ${change.status}');
+          if (change.cleanedFor.isNotEmpty) {
+            lines.add('#CLEANED_FOR: ${change.cleanedFor.join(', ')}');
+          }
           lines.add('#ORIGINAL');
           lines.add(change.original);
           lines.add('#CLEANED');
