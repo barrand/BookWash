@@ -90,7 +90,7 @@ API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:gener
 
 # Parallel processing configuration
 NUM_WORKERS = 5  # Number of parallel workers for rating/cleaning
-CLEANING_CHUNK_SIZE = 8  # Number of paragraphs per chunk for rating/cleaning
+CLEANING_CHUNK_SIZE = 4  # Number of paragraphs per chunk for rating/cleaning
 print_lock = threading.Lock()  # Thread-safe printing
 worker_id_lock = threading.Lock()  # Lock for assigning worker IDs
 worker_id_counter = 0  # Counter for assigning unique worker IDs

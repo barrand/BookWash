@@ -149,7 +149,7 @@ class _ChangeReviewPanelState extends State<ChangeReviewPanel> {
               ),
               const SizedBox(height: 8),
               Container(
-                constraints: const BoxConstraints(maxHeight: 150),
+                constraints: const BoxConstraints(maxHeight: 225),
                 child: SingleChildScrollView(
                   child: _buildHighlightedText(
                     widget.change.original,
@@ -229,7 +229,7 @@ class _ChangeReviewPanelState extends State<ChangeReviewPanel> {
               ),
               const SizedBox(height: 8),
               Container(
-                constraints: const BoxConstraints(maxHeight: 150),
+                constraints: const BoxConstraints(maxHeight: 225),
                 child: SingleChildScrollView(
                   child: _isEditing
                       ? TextField(

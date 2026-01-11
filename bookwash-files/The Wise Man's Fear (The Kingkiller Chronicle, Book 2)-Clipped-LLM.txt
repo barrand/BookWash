@@ -1,38 +1,15 @@
 
 ============================================================
 CHAPTER RATING PROMPT
-Logged: 01/04/26 12:42am MT
+Logged: 01/11/26 10:50am MT
 ============================================================
 
 Analyze the following text and rate it for content.
 
 Categories:
 
-1. LANGUAGE (profanity, offensive words)
-   The user wants to detect these specific words: bummer, damn, hell, crap, ass, piss, shit, bitch, bastard, asshole, bullshit, fuck, motherfucker, goddamn, jesus christ, oh my god
-   
-   Look for these words OR any similarly offensive profanity/slurs:
-   - Include variations: shit → sh*t, shite, shitty
-   - Include misspellings: fuck → fuk, fuuck
-   - Include compounds: bullshit, motherfucker, goddamn
-   - Include similar severity: if 'bitch' is listed, also detect 'slut', 'son of a bitch'
-   
-   ⚠️ EXCEPTION - LEGITIMATE/PROPER USES (do NOT flag these):
-   - "bastard" meaning illegitimate child - NEVER FLAG when referring to illegitimate birth:
-     • "born a bastard", "the king's bastard", "his bastard", "[name]'s bastard", "fathered a bastard"
-     • "I'm a bastard", "I'm his bastard", "You're a bastard" (when discussing parentage)
-     • "the bastard son", "a bastard child", "Gavin's bastard", "Kip was Gavin's bastard"
-     • Context clue: if discussing parentage, lineage, birth status, or social shame of illegitimacy → DO NOT FLAG
-   - "bitch" meaning female dog (e.g., "the bitch and her puppies", "a hunting bitch")
-   - "ass" meaning donkey (e.g., "rode an ass", "stubborn as an ass")
-   - "damn" meaning to condemn (e.g., "damn his soul", "damned to hell" in religious context), or physical construction for retaining water (e.g., "the damn held back the river")
-   - "hell" as a place (e.g., "descended into hell", "the fires of hell")
-   - "prick" meaning to pierce (e.g., "pricked her finger", "prick of a needle")
-   - "cock" meaning rooster (e.g., "the cock crowed", "cockfight")
-   
-   Only flag words used as profanity, insults, or crude slang - NOT their literal meanings.
-   
-   Respond with YES if ANY profane uses are found, NO if the text is clean.
+1. LANGUAGE
+   No language filtering requested - respond with NO.
 
 2. SEXUAL CONTENT - Use MPAA film rating standards:
    - G: No romance. Content suitable for young children.
@@ -56,7 +33,7 @@ Categories:
    Focus on plot events and character interactions. This will help provide context for content editing.
 
 Respond in EXACTLY this format (one rating per line):
-LANGUAGE: [YES or NO]
+LANGUAGE: NO
 SEXUAL: [G, PG, PG-13, R, or X]
 VIOLENCE: [G, PG, PG-13, R, or X]
 DESCRIPTION: [2-3 sentence summary of chapter events]
@@ -65,92 +42,13 @@ Text to analyze:
 
 
 ============================================================
-LANGUAGE CLEANING PROMPT
-Logged: 01/04/26 12:43am MT
-============================================================
-
-You are cleaning offensive language from a book. Your task is to replace specific words and slurs in a natural way that meets the narrative of the chapter while erring on the side of removing offensive content.
-[CONTEXT FOR REFERENCE - DO NOT INCLUDE IN OUTPUT]
-Chapter: The narrator and his companions are drawn to a clearing by the singing of a naked woman named Felurian. While some of the companions are fearful and resist, the narrator, inspired by his identity and a sense of opportunity, decides to enter the clearing. He is captivated by Felurian's beauty and the magical pull of her song.
-[END CONTEXT]
-
-
-SPECIFIC WORDS TO REMOVE: bummer, damn, hell, crap, ass, piss, shit, bitch, bastard, asshole, bullshit, fuck, motherfucker, goddamn, jesus christ, oh my god
-
-CRITICAL RULES:
-1. Return the COMPLETE cleaned text - ALL paragraphs, and the changed sections
-2. Preserve ALL whitespace EXACTLY - same line breaks in the same positions. If a line break occurs mid-sentence, keep it there.
-3. DO NOT change anything else - keep all other content identical
-4. Narrative descriptions like "he cursed" or "she swore" are ALLOWED - only remove actual offensive words
-5. You are doing LANGUAGE CLEANING only - never delete paragraphs or sentences (except profane words within them)
-
-⚠️ FORMATTING TAGS - CRITICAL ⚠️
-5. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
-   - If the original word has NO tags around it, the replacement must have NO tags
-   - WRONG: "hell" → "[B]heck[/B]" (added tags that weren't there!)
-   - CORRECT: "hell" → "heck" (no tags added)
-   - WRONG: "son of a bitch" → "[B]scoundrel[/B]" (added tags!)
-   - CORRECT: "son of a bitch" → "scoundrel" (no tags)
-   - Only PRESERVE existing tags: "[I]damn[/I]" → "[I]darn[/I]" (kept existing tags)
-
-SENTENCE REPAIR (VERY IMPORTANT):
-- NEVER leave a sentence starting with just "It," or "This," - that is broken grammar
-- If a profane word starts a sentence like "Fuck this" or "Fuck it", you MUST rewrite the ENTIRE sentence
-- Examples of BROKEN output to AVOID:
-  - "It," he muttered  ← WRONG
-  - "This," he screamed ← WRONG
-- Correct rewrites:
-  - "Fuck it" → "Whatever" or "Forget it" or "I don't care" or remove the sentence
-  - "Fuck this" → "I'm done with this" or "This is pointless" or remove
-  - "Fuck everything" → "I hate everything" or "Everything is terrible" or remove
-
-REPLACEMENT GUIDANCE:
-
-SEVERE PROFANITY (fuck, motherfucker, cunt):
-   - Remove entirely OR rephrase the sentence to convey emotion without the word
-   - "What the fuck?" → "What?" or "What is going on?"
-   - "Fuck you!" → Remove the line, or "Get away from me!"
-   - "fucking idiot" → "complete idiot" or just "idiot"
-   - "motherfucker" → Remove entirely
-
-STRONG PROFANITY (shit, bitch, bastard, asshole, bullshit):
-   - "shit" → "crud" or remove ("Oh shit!" → "Oh no!")
-   - "bullshit" → "nonsense" or "ridiculous"
-   - "bitch" → "jerk", "idiot", "sissy" or remove
-   - "bastard" → "jerk" or "scoundrel"
-   - "asshole" → "jerk", "fool", "dork" or remove
-   - "son of a bitch" → remove entirely
-
-MODERATE PROFANITY (damn, hell, crap, ass):
-   - "damn" → "curses" or remove ("Damn it!" → "Darn it!" or just remove)
-   - "hell" → rephrase ("What the hell" → "What on earth")
-   - "crap" → "crud" or "junk"
-   - "ass" → "butt" or "rear" or remove
-
-BLASPHEMOUS EXPRESSIONS (goddamn, jesus christ as expletive, oh my god):
-   - "goddamn" → "goodness" or remove
-   - "Jesus Christ!" (as expletive) → "Good grief!" or remove
-   - "Oh my god!" (as expletive) → "Oh my!" or "Oh my goodness!"
-   - Keep genuine religious usage (prayer, worship) unchanged
-
-GENERAL PRINCIPLES:
-- Preserve the emotional intensity when possible
-- If a word is used for emphasis, the replacement should carry similar weight
-- When removing a word leaves awkward phrasing, REWRITE the sentence to be grammatically correct
-- Don't add new ideas, but DO fix broken grammar caused by word removal
-
-Text to clean:
-
-
-
-============================================================
 ADULT CLEANING PROMPT
-Logged: 01/04/26 12:43am MT
+Logged: 01/11/26 10:52am MT
 ============================================================
 
 You are cleaning romantic/sensual content to achieve a PG rating.
 [CONTEXT FOR REFERENCE - DO NOT INCLUDE IN OUTPUT]
-Chapter: The narrator and his companions are drawn to a clearing by the singing of a naked woman named Felurian. While some of the companions are fearful and resist, the narrator, inspired by his identity and a sense of opportunity, decides to enter the clearing. He is captivated by Felurian's beauty and the magical pull of her song.
+Chapter: The narrator and four companions encounter Felurian, a naked, singing faerie by a pool. While some of the companions are fearful and resist her allure, the narrator, inspired by her song and a memory of a woman, decides to enter the clearing. The narrator declares they will meet their companions in three days and steps into the clearing to approach Felurian.
 [END CONTEXT]
 
 
@@ -181,42 +79,8 @@ Text to clean:
 
 
 ============================================================
-VIOLENCE CLEANING PROMPT
-Logged: 01/04/26 12:43am MT
-============================================================
-
-You are cleaning violent content to achieve a PG rating.
-[CONTEXT FOR REFERENCE - DO NOT INCLUDE IN OUTPUT]
-Chapter: The narrator, Kvothe, struggles against a powerful enchantment or influence from Felurian that is overriding his will and desires. Despite intense physical and mental resistance, he finds himself drawn to her, experiencing overwhelming lust and hunger. Ultimately, Kvothe's internal struggle culminates in a moment of surrender, where something in his mind breaks.
-[END CONTEXT]
-
-
-Think like an MPAA movie rating board. Your job is to edit this text so it would fit in a PG-rated film.
-
-THE QUESTION: If this scene were in a movie, would it get a PG rating or higher?
-- If it would get PG or lower → KEEP IT
-- If it would get a higher rating → REMOVE or REWRITE IT
-
-CLEANING APPROACH:
-- Remove graphic details that exceed the PG threshold
-- You may summarize violent events briefly ("A fight broke out.")
-- Keep tension and stakes, reduce graphic detail
-- When in doubt about whether something is PG-appropriate, remove it
-
-RULES:
-1. Return ONLY the cleaned text - no explanations
-2. Preserve paragraph structure - keep the same number of paragraphs, separated by blank lines
-3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
-4. DO NOT ADD chapter numbers, "Chapter X", or any headers that aren't in the original text
-5. When uncertain, remove it
-
-Text to clean:
-
-
-
-============================================================
 AGGRESSIVE ADULT CLEANING PROMPT
-Logged: 01/04/26 12:43am MT
+Logged: 01/11/26 10:52am MT
 ============================================================
 
 ⚠️ AGGRESSIVE CLEANING MODE - This content FAILED normal cleaning. Be EXTREMELY strict.
@@ -258,7 +122,7 @@ Text to aggressively clean:
 
 ============================================================
 AGGRESSIVE VIOLENCE CLEANING PROMPT
-Logged: 01/04/26 12:43am MT
+Logged: 01/11/26 10:52am MT
 ============================================================
 
 ⚠️ AGGRESSIVE CLEANING MODE - This content failed normal cleaning. Be EXTREMELY strict.
