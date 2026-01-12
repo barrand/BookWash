@@ -142,7 +142,7 @@ class WebApiService implements ApiService {
       } catch (e) {
         // Continue polling on error
       }
-      
+
       // Wait before next poll
       await Future.delayed(const Duration(milliseconds: 500));
     }
