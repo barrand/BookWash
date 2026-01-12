@@ -694,6 +694,72 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Intro section
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'BookWash uses AI to automatically clean up offensive or inappropriate content from EPUB ebooks.',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Please use BookWash with ethically sourced ebooks that you have the rights to modify. Avoid processing copyrighted material without permission.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      Text(
+                        'Give it a whirl! If you don\'t have an epub handy, grab a public domain book like ',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: [
+                          InkWell(
+                            onTap: () => web.window.open(
+                              'https://www.gutenberg.org/ebooks/76',
+                              '_blank',
+                            ),
+                            child: Text(
+                              'Huckleberry Finn',
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: Colors.blue,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                            ),
+                          ),
+                          Text(
+                            'from Project Gutenberg and ask it to remove the hundreds of n-word racial slurs in the book, or get',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          InkWell(
+                            onTap: () => web.window.open(
+                              'https://www.gutenberg.org/ebooks/345',
+                              '_blank',
+                            ),
+                            child: Text(
+                              'Dracula',
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: Colors.blue,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                            ),
+                          ),
+                          Text(
+                            'and set the desired adult content level to G to catch the vampire seduction scene in chapter 3.',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
                 // Step 1: File Selection
                 _buildCard(
                   title: '1. Select EPUB File',

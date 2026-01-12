@@ -246,6 +246,7 @@ async def process_book(session_id: str, epub_path: Path, request: ProcessRequest
             in_change = False
             change_id = None
             change_reason = "Content modification"
+            change_status = "pending"
             change_original = []
             change_cleaned = []
             in_original = False
@@ -256,23 +257,27 @@ async def process_book(session_id: str, epub_path: Path, request: ProcessRequest
                     in_change = True
                     change_id = line.replace('#CHANGE:', '').strip()
                     change_reason = "Content modification"
+                    change_status = "pending"
                     change_original = []
                     change_cleaned = []
                     in_original = False
                     in_cleaned = False
-                elif line.startswith('#REASON:') and in_change:
-                    change_reason = line.replace('#REASON:', '').strip()
+                elif line.startswith('#STATUS:') and in_change:
+                    change_status = line.replace('#STATUS:', '').strip()
+                elif line.startswith('#CLEANED_FOR:') and in_change:
+                    change_reason = line.replace('#CLEANED_FOR:', '').strip()
                 elif line == '#END' and in_change:
-                    # Save this change
-                    changes.append({
-                        "id": change_id,
-                        "chapter": chapter.number,
-                        "chapter_title": chapter.title or f"Chapter {chapter.number}",
-                        "original": '\n'.join(change_original),
-                        "cleaned": '\n'.join(change_cleaned),
-                        "reason": change_reason,
-                        "status": "pending"
-                    })
+                    # Only save changes that aren't marked as "ok" (no changes needed)
+                    if change_status != "ok":
+                        changes.append({
+                            "id": change_id,
+                            "chapter": chapter.number,
+                            "chapter_title": chapter.title or f"Chapter {chapter.number}",
+                            "original": '\n'.join(change_original),
+                            "cleaned": '\n'.join(change_cleaned),
+                            "reason": change_reason,
+                            "status": "pending"
+                        })
                     in_change = False
                 elif in_change:
                     if line == '#ORIGINAL':
