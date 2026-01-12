@@ -184,7 +184,7 @@ def parse_bookwash(filepath: str) -> BookwashFile:
                 if line.startswith('#STATUS:'):
                     current_change.status = line.split(':', 1)[1].strip()
                     continue
-                elif line.startswith('#REASON:'):
+                elif line.startswith('#CLEANED_FOR:'):
                     current_change.reason = line.split(':', 1)[1].strip()
                     continue
                 elif line.strip() == '#ORIGINAL':
