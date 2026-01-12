@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../services/epub_parser.dart';
 import 'filter_widgets.dart';
 
 /// Card widget for Step 1: File Selection
@@ -7,7 +6,7 @@ class FileSelectionCard extends StatelessWidget {
   final bool isLoading;
   final bool isProcessing;
   final String? fileName;
-  final ParsedEpub? parsedEpub;
+  final String? fileDetails;
   final VoidCallback onSelectFile;
 
   const FileSelectionCard({
@@ -15,7 +14,7 @@ class FileSelectionCard extends StatelessWidget {
     required this.isLoading,
     required this.isProcessing,
     required this.fileName,
-    required this.parsedEpub,
+    this.fileDetails,
     required this.onSelectFile,
   });
 
@@ -74,7 +73,7 @@ class FileSelectionCard extends StatelessWidget {
       );
     }
 
-    if (fileName != null && parsedEpub != null) {
+    if (fileName != null) {
       return Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -99,10 +98,11 @@ class FileSelectionCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 4),
-            Text(
-              '${parsedEpub!.chapters.length} chapters, ${parsedEpub!.totalParagraphs} paragraphs',
-              style: TextStyle(fontSize: 12, color: Colors.green[300]),
-            ),
+            if (fileDetails != null)
+              Text(
+                fileDetails!,
+                style: TextStyle(fontSize: 12, color: Colors.green[300]),
+              ),
           ],
         ),
       );

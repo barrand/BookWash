@@ -22,6 +22,7 @@ class ProcessingSession {
   double progress;
   String phase;
   List<ChangeItem> changes;
+  List<LogMessage> logs;
 
   ProcessingSession({
     required this.sessionId,
@@ -30,7 +31,9 @@ class ProcessingSession {
     this.progress = 0.0,
     this.phase = 'idle',
     List<ChangeItem>? changes,
-  }) : changes = changes ?? [];
+    List<LogMessage>? logs,
+  }) : changes = changes ?? [],
+       logs = logs ?? [];
 }
 
 /// Represents a single content change
@@ -110,6 +113,7 @@ abstract class ApiService {
   /// Start processing a session
   Future<void> startProcessing({
     required String sessionId,
+    required List<String> languageWords,
     required int targetAdult,
     required int targetViolence,
     required String model,

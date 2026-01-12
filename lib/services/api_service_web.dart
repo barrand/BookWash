@@ -87,6 +87,7 @@ class WebApiService implements ApiService {
   @override
   Future<void> startProcessing({
     required String sessionId,
+    required List<String> languageWords,
     required int targetAdult,
     required int targetViolence,
     required String model,
@@ -100,15 +101,13 @@ class WebApiService implements ApiService {
 
     final response = await http.post(
       uri,
-      headers: {
-        ..._headers,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: {
-        'target_adult': pythonAdult.toString(),
-        'target_violence': pythonViolence.toString(),
+      headers: {..._headers, 'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'language_words': languageWords,
+        'adult_level': pythonAdult,
+        'violence_level': pythonViolence,
         'model': model,
-      },
+      }),
     );
 
     if (response.statusCode != 200) {
@@ -117,73 +116,36 @@ class WebApiService implements ApiService {
   }
 
   @override
-  Stream<LogMessage> streamLogs(String sessionId) {
-    return _getSharedSSEStream(
-      sessionId,
-    ).where((event) => event['type'] == 'log').map((event) {
-      final log = event['log'] as Map<String, dynamic>;
-      return LogMessage.fromJson(log);
-    });
+  Stream<LogMessage> streamLogs(String sessionId) async* {
+    // Logs are now fetched via the status stream to avoid redundant polling
+    // This method exists for API compatibility but should not be used
+    // Instead, get logs from ProcessingSession.logs via streamStatus()
+    yield* const Stream.empty();
   }
 
   @override
-  Stream<ProcessingSession> streamStatus(String sessionId) {
-    return _getSharedSSEStream(
-      sessionId,
-    ).where((event) => event['type'] == 'status').map((event) {
-      return ProcessingSession(
-        sessionId: sessionId,
-        filename: '',
-        status: event['status'] ?? '',
-        progress: (event['progress'] as num?)?.toDouble() ?? 0.0,
-        phase: event['phase'] ?? '',
-      );
-    });
-  }
-
-  /// Get or create a shared broadcast stream for SSE events
-  Stream<Map<String, dynamic>> _getSharedSSEStream(String sessionId) {
-    if (!_sseControllers.containsKey(sessionId)) {
-      final controller = StreamController<Map<String, dynamic>>.broadcast();
-      _sseControllers[sessionId] = controller;
-
-      // Start the actual SSE connection using browser's EventSource
-      _connectSSE(sessionId, controller);
-    }
-    return _sseControllers[sessionId]!.stream;
-  }
-
-  /// Connect to SSE endpoint using browser's EventSource API
-  void _connectSSE(
-    String sessionId,
-    StreamController<Map<String, dynamic>> controller,
-  ) {
-    final url = '$_baseUrl/api/logs/$sessionId';
-    final eventSource = web.EventSource(url);
-
-    eventSource.onmessage = (web.MessageEvent event) {
+  Stream<ProcessingSession> streamStatus(String sessionId) async* {
+    // Poll immediately first, then continue polling every 500ms
+    // This ensures we don't miss rapid phase changes
+    while (true) {
       try {
-        final dataString = (event.data as JSString?)?.toDart ?? '';
-        final data = json.decode(dataString) as Map<String, dynamic>;
-        controller.add(data);
+        final session = await getSession(sessionId);
+        yield session;
 
-        // Check if done
-        if (data['type'] == 'done') {
-          eventSource.close();
-          controller.close();
-          _sseControllers.remove(sessionId);
+        // Stop polling once we reach a final status
+        final status = session.status.toLowerCase();
+        if (status != 'processing' &&
+            status != 'created' &&
+            status != 'uploading') {
+          break;
         }
       } catch (e) {
-        // Ignore parse errors
+        // Continue polling on error
       }
-    }.toJS;
-
-    eventSource.onerror = (web.Event event) {
-      eventSource.close();
-      controller.addError(Exception('SSE connection error'));
-      controller.close();
-      _sseControllers.remove(sessionId);
-    }.toJS;
+      
+      // Wait before next poll
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
   }
 
   @override
@@ -202,13 +164,25 @@ class WebApiService implements ApiService {
             .toList() ??
         [];
 
+    final logs =
+        (data['logs'] as List?)?.map((l) {
+          final logMap = l as Map<String, dynamic>;
+          return LogMessage(
+            time:
+                DateTime.tryParse(logMap['timestamp'] ?? '') ?? DateTime.now(),
+            message: logMap['message'] ?? '',
+          );
+        }).toList() ??
+        [];
+
     return ProcessingSession(
-      sessionId: data['id'],
-      filename: data['filename'],
-      status: data['status'],
+      sessionId: data['session_id'] ?? sessionId,
+      filename: data['filename'] ?? '',
+      status: data['status'] ?? '',
       progress: (data['progress'] as num?)?.toDouble() ?? 0.0,
       phase: data['phase'] ?? '',
       changes: changes,
+      logs: logs,
     );
   }
 
