@@ -7,7 +7,6 @@ services:
     plan: free
     buildCommand: |
       pip install -r webapp/requirements.txt
-      flutter build web --target lib/main_web.dart --release
     startCommand: uvicorn webapp.app:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GEMINI_API_KEY
