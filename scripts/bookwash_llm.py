@@ -245,7 +245,7 @@ class Chapter:
                     in_original = False
                     in_cleaned = True
                     continue
-                if line.startswith('#STATUS:') or line.startswith('#REASON:'):
+                if line.startswith('#STATUS:') or line.startswith('#CLEANED_FOR:'):
                     continue
                 # Use original text for rating
                 if in_original:
@@ -298,7 +298,7 @@ class Chapter:
                     in_original = False
                     in_cleaned = True
                     continue
-                if line.startswith('#STATUS:') or line.startswith('#REASON:'):
+                if line.startswith('#STATUS:') or line.startswith('#CLEANED_FOR:'):
                     continue
                 if in_original:
                     original_lines.append(line)
