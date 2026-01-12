@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -149,7 +149,7 @@ async def process_book(session_id: str, epub_path: Path, request: ProcessRequest
         if not api_key:
             raise ValueError("GEMINI_API_KEY not set")
         
-        # Create client with language words
+        # Build language words and filter types for command line
         language_words = request.language_words if request.language_words else []
         filter_types = []
         if language_words:
@@ -159,62 +159,85 @@ async def process_book(session_id: str, epub_path: Path, request: ProcessRequest
         if request.violence_level < 4:
             filter_types.append("violence")
         
-        # Load the BookWash file
-        bw = bookwash_llm.parse_bookwash(bookwash_path)
-        
         filter_types_str = ",".join(filter_types) if filter_types else "sexual,violence"
         
-        client = bookwash_llm.GeminiClient(
-            api_key=api_key,
-            model=request.model,
-            language_words=language_words,
-            filter_types=filter_types_str
-        )
+        # Rate and clean using Python subprocess to capture all output
+        await log_message(session_id, "🤖 Starting AI processing...")
         
-        # Rate chapters
         session["phase"] = "rating"
         session["progress"] = 20
         save_session(session_id, session)
-        print(f"Phase: rating, Progress: 20%")
         
-        await log_message(session_id, f"⭐ Rating {len(bw.chapters)} chapters...")
-        print(f"Starting rating with {len(bw.chapters)} chapters...")
-        bookwash_llm.cmd_rate(bw, client, request.adult_level, request.violence_level, filepath=bookwash_path, verbose=False)
-        bookwash_llm.write_bookwash(bw, bookwash_path)
+        # Build the command - run bookwash_llm.py as subprocess
+        language_words_json = json.dumps(language_words)
+        cmd = [
+            sys.executable,
+            '-u',  # Unbuffered output
+            str(SCRIPT_DIR / "bookwash_llm.py"),
+            '--rate',
+            '--clean-passes',
+            str(bookwash_path),
+            '--api-key', api_key,
+            '--model', request.model,
+            '--language-words', language_words_json,
+            '--filter-types', filter_types_str,
+            '--sexual', str(request.adult_level),
+            '--violence', str(request.violence_level),
+        ]
         
-        # Count flagged chapters - check status fields
-        flagged = sum(1 for ch in bw.chapters 
-                     if ch.language_status == 'pending' or 
-                        ch.adult_status == 'pending' or 
-                        ch.violence_status == 'pending')
-        print(f"Rating complete: {flagged}/{len(bw.chapters)} chapters flagged")
+        # Run subprocess and stream output
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, 'PYTHONUNBUFFERED': '1'}
+        )
         
-        session["progress"] = 40
-        save_session(session_id, session)
+        # Stream stdout
+        async def stream_stdout():
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                text = line.decode().rstrip()
+                if text:  # Only log non-empty lines
+                    await log_message(session_id, text)
+                    
+                    # Parse phase from log lines (similar to macOS app)
+                    if 'PASS A: Rating' in text or 'Starting rating' in text:
+                        session["phase"] = "rating"
+                        session["progress"] = 20
+                        save_session(session_id, session)
+                    elif 'CLEANING PIPELINE:' in text:
+                        session["phase"] = "cleaning"
+                        session["progress"] = 50
+                        save_session(session_id, session)
+                    elif 'VERIFYING CLEANED CONTENT' in text:
+                        session["progress"] = 85
+                        save_session(session_id, session)
         
-        await log_message(session_id, f"✅ Rating complete: {flagged}/{len(bw.chapters)} chapters flagged for cleaning")
+        # Stream stderr
+        async def stream_stderr():
+            while True:
+                line = await process.stderr.readline()
+                if not line:
+                    break
+                text = line.decode().rstrip()
+                if text:
+                    await log_message(session_id, f"⚠️ {text}")
         
-        # Clean chapters
-        session["phase"] = "cleaning"
-        session["progress"] = 50
-        save_session(session_id, session)
-        print(f"Phase: cleaning, Progress: 50%")
+        # Wait for both streams
+        await asyncio.gather(stream_stdout(), stream_stderr())
+        await process.wait()
         
-        if flagged > 0:
-            await log_message(session_id, f"🧹 Cleaning {flagged} flagged chapters...")
-            print(f"Starting cleaning for {flagged} chapters...")
-            bookwash_llm.cmd_clean_passes(bw, client, bookwash_path, verbose=False)
-            bookwash_llm.write_bookwash(bw, bookwash_path)
-            print(f"Cleaning complete")
-        else:
-            await log_message(session_id, "✨ No chapters need cleaning!")
-            print("No chapters need cleaning")
+        if process.returncode != 0:
+            raise ValueError(f"LLM processing failed with code {process.returncode}")
         
-        session["progress"] = 90
-        save_session(session_id, session)
-        
-        await log_message(session_id, "✅ Processing complete - ready for review")
+        await log_message(session_id, "✅ AI processing complete")
         print("Processing complete, extracting changes...")
+        
+        # Re-parse the bookwash file after subprocess completed
+        bw = bookwash_llm.parse_bookwash(bookwash_path)
         
         # Extract changes for review (parse #CHANGE blocks from content)
         changes = []
@@ -417,6 +440,47 @@ async def get_session(session_id: str) -> SessionResponse:
     return SessionResponse(**session)
 
 
+@app.post("/api/session/{session_id}/change/{change_id}")
+async def update_change(session_id: str, change_id: str, status: str = Form(...)):
+    """Update a specific change status"""
+    session = load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Update change status
+    changes = session.get("changes", [])
+    for change in changes:
+        if change["id"] == change_id:
+            if status:
+                change["status"] = status
+            break
+    
+    session["changes"] = changes
+    save_session(session_id, session)
+    
+    return {"message": "Change updated"}
+
+
+@app.post("/api/session/{session_id}/accept-all")
+async def accept_all_changes(session_id: str):
+    """Accept all pending changes"""
+    session = load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    changes = session.get("changes", [])
+    accepted_count = 0
+    for change in changes:
+        if change["status"] == "pending":
+            change["status"] = "accepted"
+            accepted_count += 1
+    
+    session["changes"] = changes
+    save_session(session_id, session)
+    
+    return {"accepted_count": accepted_count}
+
+
 @app.post("/api/changes/{session_id}")
 async def handle_change(session_id: str, action: ChangeAction):
     """Accept or reject a change"""
@@ -439,7 +503,7 @@ async def handle_change(session_id: str, action: ChangeAction):
     return {"message": "Change updated"}
 
 
-@app.post("/api/export/{session_id}")
+@app.post("/api/session/{session_id}/export")
 async def export_book(session_id: str):
     """Export the cleaned book as EPUB"""
     session = load_session(session_id)
@@ -450,25 +514,22 @@ async def export_book(session_id: str):
     if not bookwash_path.exists():
         raise HTTPException(status_code=404, detail="BookWash file not found")
     
-    # The bookwash file already has the changes embedded
-    # User decisions are tracked in session but for now we'll export as-is
-    # TODO: Update content_lines based on user accepted/rejected changes
-    
     # Generate cleaned EPUB using subprocess
     output_path = bookwash_path.parent / f"{bookwash_path.stem}_cleaned.epub"
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_DIR / "bookwash_to_epub.py"), str(bookwash_path), str(output_path)],
+        [sys.executable, str(SCRIPT_DIR / "bookwash_to_epub.py"), str(bookwash_path), "--output", str(output_path), "--apply-all"],
         capture_output=True,
         text=True
     )
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=f"EPUB export failed: {result.stderr}")
-    # User decisions are tracked in session but for now we'll export as-is
-    # TODO: Update content_lines based on user accepted/rejected changes
     
-    # Generate cleaned EPUB
-    output_path = bookwash_path.parent / f"{bookwash_path.stem}_cleaned.epub"
-    convert_bookwash_to_epub(str(bookwash_path), str(output_path))
+    # Return the EPUB file
+    return FileResponse(
+        path=str(output_path),
+        media_type="application/epub+zip",
+        filename=f"{bookwash_path.stem}_cleaned.epub"
+    )
     
     return FileResponse(
         output_path,

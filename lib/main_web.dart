@@ -244,6 +244,26 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
     }
   }
 
+  // Parse log lines to extract sub-phase information (like macOS app)
+  String _cleaningSubPhase = '';
+
+  void _parseLogForPhase(String line) {
+    if (line.contains('CLEANING PIPELINE:')) {
+      setState(() {
+        progressPhase = 'cleaning';
+        _cleaningSubPhase = 'identifying';
+      });
+    } else if (line.contains('=== PASS 1: LANGUAGE CLEANING')) {
+      setState(() => _cleaningSubPhase = 'language');
+    } else if (line.contains('=== PASS 2: ADULT CONTENT CLEANING')) {
+      setState(() => _cleaningSubPhase = 'adult');
+    } else if (line.contains('=== PASS 3: VIOLENCE CLEANING')) {
+      setState(() => _cleaningSubPhase = 'violence');
+    } else if (line.contains('=== VERIFYING CLEANED CONTENT')) {
+      setState(() => _cleaningSubPhase = 'verifying');
+    }
+  }
+
   void _saveLanguageWords() {
     // Web client does not persist selections locally yet.
   }
@@ -333,24 +353,31 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
         model: selectedModel,
       );
 
-      // Stream logs (subscription)
-      final logSub = _api.streamLogs(session.sessionId).listen((log) {
-        _addLog(log.message);
-      });
+      // Subscribe to SSE stream for real-time updates
+      final stream = _api.streamStatus(session.sessionId);
 
-      // Stream status (subscription)
-      final statusSub = _api.streamStatus(session.sessionId).listen((status) {
-        print('📡 Status update: phase=${status.phase}, progress=${status.progress}, status=${status.status}');
+      await for (final status in stream) {
         setState(() {
           progress = status.progress / 100;
           progressPhase = status.phase;
           _session = status;
         });
-      });
 
-      // Wait for processing to reach review/error then fetch final session
-      await statusSub.asFuture<void>().catchError((_) {});
-      await logSub.cancel();
+        // Parse logs for sub-phase information (like macOS app does)
+        for (final log in status.logs) {
+          if (!logs.contains(log.message)) {
+            _addLog(log.message);
+            _parseLogForPhase(log.message);
+          }
+        }
+
+        // Stop when complete
+        if (status.status == 'review' ||
+            status.status == 'complete' ||
+            status.status == 'error') {
+          break;
+        }
+      }
 
       // Fetch final session with changes
       final finalSession = await _api.getSession(session.sessionId);
@@ -621,16 +648,8 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
   }
 
   String get _indicatorSubPhase {
-    // Web backend doesn't provide sub-phase details yet,
-    // but we can infer from progress percentage during cleaning
-    if (progressPhase != 'cleaning') return '';
-
-    // Estimate sub-phase based on progress (cleaning is 50-100%)
-    if (progress < 0.625) return 'identifying';
-    if (progress < 0.75) return 'language';
-    if (progress < 0.875) return 'adult';
-    if (progress < 0.95) return 'violence';
-    return 'verifying';
+    // Return the parsed sub-phase from log lines
+    return _cleaningSubPhase;
   }
 
   @override
