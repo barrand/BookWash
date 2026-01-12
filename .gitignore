@@ -52,7 +52,10 @@ app.*.map.json
 stories/
 
 # Original EPUBs (copyrighted content)
-bookwash-files/orig-epubs/
+orig-epubs/
+
+# BookWash files (processed books and assets)
+bookwash-files/
 
 # Test harness output
 test_output/

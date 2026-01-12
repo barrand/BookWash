@@ -241,17 +241,12 @@ def reconstruct_chapter_text(chapter: Chapter, mode: str) -> str:
     current_cleaned = []
     current_status = 'pending'
     
+    # Regex to match any bookwash metadata tag: #UPPERCASE_TAG: or #UPPERCASE_TAG
+    import re
+    metadata_pattern = re.compile(r'^#[A-Z][A-Z0-9_]*:?')
+    
     for line in lines:
-        # Skip chapter metadata (handle both with and without colon suffix)
-        if line.startswith('#TITLE:') or line.startswith('#FILE:') or \
-           line.startswith('#RATING:') or line.startswith('#NEEDS_CLEANING') or \
-           line.startswith('#PENDING_CLEANING') or \
-           line.startswith('#NEEDS_LANGUAGE_CLEANING') or \
-           line.startswith('#NEEDS_ADULT_CLEANING') or \
-           line.startswith('#NEEDS_VIOLENCE_CLEANING'):
-            continue
-        
-        # Handle change block markers
+        # Handle change block markers first
         if line.startswith('#CHANGE:'):
             in_change = True
             current_original = []
@@ -262,8 +257,6 @@ def reconstruct_chapter_text(chapter: Chapter, mode: str) -> str:
         if in_change:
             if line.startswith('#STATUS:'):
                 current_status = line.split(':', 1)[1].strip()
-                continue
-            elif line.startswith('#REASON:'):
                 continue
             elif line.strip() == '#ORIGINAL':
                 in_original = True
@@ -298,8 +291,16 @@ def reconstruct_chapter_text(chapter: Chapter, mode: str) -> str:
             elif in_cleaned:
                 current_cleaned.append(line)
                 continue
+            else:
+                # Inside change block but not in ORIGINAL/CLEANED - skip metadata tags
+                if metadata_pattern.match(line):
+                    continue
         
-        # Regular content line (outside any change block)
+        # Outside change blocks - skip any metadata tags
+        if metadata_pattern.match(line):
+            continue
+        
+        # Regular content line
         output_lines.append(line)
     
     # Join lines and clean up excessive blank lines

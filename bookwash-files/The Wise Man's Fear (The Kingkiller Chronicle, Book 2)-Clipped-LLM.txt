@@ -1,0 +1,150 @@
+
+============================================================
+CHAPTER RATING PROMPT
+Logged: 01/11/26 10:50am MT
+============================================================
+
+Analyze the following text and rate it for content.
+
+Categories:
+
+1. LANGUAGE
+   No language filtering requested - respond with NO.
+
+2. SEXUAL CONTENT - Use MPAA film rating standards:
+   - G: No romance. Content suitable for young children.
+   - PG: Light romance (hand-holding, quick innocent kiss). Nothing that would make a parent uncomfortable.
+   - PG-13: Passionate kissing, implied intimacy, fade-to-black. The camera cuts away before anything explicit.
+   - R: Sexual content that would get a film an R rating. Descriptive intimate scenes, even if poetic/metaphorical.
+   - X: Explicit, graphic sexual content.
+
+   CRITICAL: Authors often describe sex through metaphor, poetry, or fragmented prose.
+   If it's clearly describing sex artistically → rate it R.
+   Poetic language does not reduce the rating.
+
+3. VIOLENCE - Use MPAA film rating standards:
+   - G: No physical violence (arguments only)
+   - PG: Mild action, brief scuffles, no blood
+   - PG-13: Combat, injuries, some blood, weapon use
+   - R: Graphic injury detail, notable gore, intense violence
+   - X: Extreme gore/torture, sadistic detail
+
+4. DESCRIPTION: Provide a 2-3 sentence summary of what happens in this chapter.
+   Focus on plot events and character interactions. This will help provide context for content editing.
+
+Respond in EXACTLY this format (one rating per line):
+LANGUAGE: NO
+SEXUAL: [G, PG, PG-13, R, or X]
+VIOLENCE: [G, PG, PG-13, R, or X]
+DESCRIPTION: [2-3 sentence summary of chapter events]
+
+Text to analyze:
+
+
+============================================================
+ADULT CLEANING PROMPT
+Logged: 01/11/26 10:52am MT
+============================================================
+
+You are cleaning romantic/sensual content to achieve a PG rating.
+[CONTEXT FOR REFERENCE - DO NOT INCLUDE IN OUTPUT]
+Chapter: The narrator and four companions encounter Felurian, a naked, singing faerie by a pool. While some of the companions are fearful and resist her allure, the narrator, inspired by her song and a memory of a woman, decides to enter the clearing. The narrator declares they will meet their companions in three days and steps into the clearing to approach Felurian.
+[END CONTEXT]
+
+
+Think like an MPAA movie rating board. Your job is to edit this text so it would fit in a PG-rated film.
+
+THE QUESTION: If this scene were in a movie, would it get a PG rating or higher?
+- If it would get PG or lower → KEEP IT
+- If it would get a higher rating → REMOVE or REWRITE IT
+
+CLEANING APPROACH:
+- Remove content that exceeds the PG threshold
+- You may replace explicit scenes with brief neutral summaries ("They spent time together.")
+- You may use "fade to black" transitions ("Later that evening...")
+- When in doubt about whether something is PG-appropriate, remove it
+
+REMEMBER: Poetic or metaphorical descriptions of sex are still descriptions of sex. 
+A beautifully written sex scene is still a sex scene - clean it accordingly.
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. Preserve paragraph structure - keep the same number of paragraphs, separated by blank lines
+3. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
+4. DO NOT ADD chapter numbers, "Chapter X", or any headers that aren't in the original text
+5. When uncertain, remove it
+
+Text to clean:
+
+
+
+============================================================
+AGGRESSIVE ADULT CLEANING PROMPT
+Logged: 01/11/26 10:52am MT
+============================================================
+
+⚠️ AGGRESSIVE CLEANING MODE - This content FAILED normal cleaning. Be EXTREMELY strict.
+
+Your job is to COMPLETELY REMOVE all sexual/sensual content and replace with brief summaries.
+
+🚨 CRITICAL: YOUR OUTPUT MUST BE DIFFERENT FROM THE INPUT 🚨
+This text was already sent for cleaning and came back unchanged. That was WRONG.
+You MUST modify this text. Returning it unchanged is NOT acceptable.
+
+AGGRESSIVE RULES:
+1. ANY description of bodies, touching, kissing, or physical intimacy → REMOVE entirely
+2. ANY suggestive dialogue or innuendo → REMOVE entirely  
+3. Replace removed content with a brief summary of what happened
+4. When in doubt → REMOVE IT. Better to lose content than keep anything questionable.
+5. This should be safe for a 10-year-old to read.
+6. DO NOT ADD chapter numbers, "Chapter X", or any headers that aren't in the original text.
+7. MATCH the narrative voice of the input. If the input uses "I", your output uses "I".
+
+SPECIFIC PHRASES THAT MUST BE REMOVED (examples):
+- "clutch her hips" → sexual, REMOVE
+- "our rhythm" → sexual metaphor, REMOVE  
+- "she writhes" → sexual, REMOVE
+- "astride me" → sexual position, REMOVE
+- "her motion slows" (in sexual context) → REMOVE
+- Any mention of bodies moving together rhythmically → REMOVE
+
+DO NOT try to preserve the scene's mood or tension. Just summarize what happened plot-wise.
+If the input is describing a sex scene, your output should be 1-2 sentences like "They were together."
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. It's OK to drastically shorten the text
+3. DO NOT ADD [B], [I], or any formatting tags
+
+Text to aggressively clean:
+
+
+
+============================================================
+AGGRESSIVE VIOLENCE CLEANING PROMPT
+Logged: 01/11/26 10:52am MT
+============================================================
+
+⚠️ AGGRESSIVE CLEANING MODE - This content failed normal cleaning. Be EXTREMELY strict.
+
+Your job is to COMPLETELY REMOVE all graphic violence and replace with brief summaries.
+
+AGGRESSIVE RULES:
+1. ANY description of blood, wounds, pain, or injury → REMOVE entirely
+2. ANY blow-by-blow fight choreography → Summarize briefly
+3. ANY torture, abuse, or graphic suffering → Remove, summarize briefly
+4. When in doubt → REMOVE IT. Better to lose content than keep anything graphic.
+5. This should be safe for a 10-year-old to read.
+6. DO NOT ADD chapter numbers, "Chapter X", or any headers that aren't in the original text.
+7. MATCH the narrative voice of the input. If the input uses "I", your output uses "I".
+
+DO NOT try to preserve tension or stakes. Just summarize what happened plot-wise.
+
+RULES:
+1. Return ONLY the cleaned text - no explanations
+2. It's OK to drastically shorten the text
+3. DO NOT ADD [B], [I], or any formatting tags
+
+Text to aggressively clean:
+
+

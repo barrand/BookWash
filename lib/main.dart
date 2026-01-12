@@ -837,7 +837,8 @@ class _BookWashHomeState extends State<BookWashHome> {
     final changes = <MapEntry<int, BookWashChange>>[];
     for (int i = 0; i < bookwashFile!.chapters.length; i++) {
       for (final change in bookwashFile!.chapters[i].changes) {
-        if (change.status == 'pending') {
+        // Only include pending changes that have cleaned content to review
+        if (change.status == 'pending' && change.cleaned.trim().isNotEmpty) {
           changes.add(MapEntry(i, change));
         }
       }

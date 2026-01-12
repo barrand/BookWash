@@ -1,5 +1,5 @@
 /// Widget exports for BookWash app
-library widgets;
+library;
 
 export 'change_review_panel.dart';
 export 'filter_widgets.dart';
