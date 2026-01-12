@@ -351,11 +351,32 @@ async def upload_file(
     return SessionResponse(**session)
 
 
+# Alternative endpoint that accepts form data (for testing/compatibility)
+@app.post("/api/process-form/{session_id}")
+async def start_processing_form(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    target_language: int = Form(2),
+    target_adult: int = Form(2),
+    target_violence: int = Form(3),
+    model: str = Form("gemini-2.0-flash")
+):
+    """Start processing with form data (maps to JSON endpoint internally)"""
+    # Convert form parameters to ProcessRequest
+    request = ProcessRequest(
+        language_words=[],  # Form doesn't send language words
+        adult_level=target_adult,
+        violence_level=target_violence,
+        model=model
+    )
+    return await start_processing(session_id, background_tasks, request)
+
+
 @app.post("/api/process/{session_id}")
 async def start_processing(
     session_id: str,
-    request: ProcessRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    request: ProcessRequest
 ):
     """Start processing a session"""
     print(f"\n=== START PROCESSING CALLED ===")
