@@ -709,52 +709,85 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
                         'Please use BookWash with ethically sourced ebooks that you have the rights to modify. Avoid processing copyrighted material without permission.',
                         style: Theme.of(context).textTheme.bodyMedium,
                       ),
-                      Text(
-                        'Give it a whirl! If you don\'t have an epub handy, grab a public domain book like ',
-                        style: Theme.of(context).textTheme.bodyMedium,
+                      const SizedBox(height: 12),
+                      RichText(
+                        text: TextSpan(
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          children: [
+                            const TextSpan(
+                              text:
+                                  'Give it a whirl! If you don\'t have an epub handy, grab a public domain book like ',
+                            ),
+                            WidgetSpan(
+                              child: InkWell(
+                                onTap: () => web.window.open(
+                                  'https://www.gutenberg.org/ebooks/76',
+                                  '_blank',
+                                ),
+                                child: Text(
+                                  'Huckleberry Finn',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: Colors.blue,
+                                        decoration: TextDecoration.underline,
+                                      ),
+                                ),
+                              ),
+                            ),
+                            const TextSpan(
+                              text:
+                                  ' from Project Gutenberg and ask it to remove the hundreds of n-word racial slurs in the book, or get ',
+                            ),
+                            WidgetSpan(
+                              child: InkWell(
+                                onTap: () => web.window.open(
+                                  'https://www.gutenberg.org/ebooks/345',
+                                  '_blank',
+                                ),
+                                child: Text(
+                                  'Dracula',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: Colors.blue,
+                                        decoration: TextDecoration.underline,
+                                      ),
+                                ),
+                              ),
+                            ),
+                            const TextSpan(
+                              text:
+                                  ' and set the desired adult content level to G to catch the mild sensual vampire encounter in chapter 3.',
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 4,
-                        runSpacing: 4,
-                        children: [
-                          InkWell(
-                            onTap: () => web.window.open(
-                              'https://www.gutenberg.org/ebooks/76',
-                              '_blank',
+                      const SizedBox(height: 12),
+                      RichText(
+                        text: TextSpan(
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          children: [
+                            const TextSpan(
+                              text: 'For full details, see the project ',
                             ),
-                            child: Text(
-                              'Huckleberry Finn',
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(
-                                    color: Colors.blue,
-                                    decoration: TextDecoration.underline,
-                                  ),
+                            WidgetSpan(
+                              child: InkWell(
+                                onTap: () => web.window.open(
+                                  'https://github.com/barrand/BookWash',
+                                  '_blank',
+                                ),
+                                child: Text(
+                                  'here',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: Colors.blue,
+                                        decoration: TextDecoration.underline,
+                                      ),
+                                ),
+                              ),
                             ),
-                          ),
-                          Text(
-                            'from Project Gutenberg and ask it to remove the hundreds of n-word racial slurs in the book, or get',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                          InkWell(
-                            onTap: () => web.window.open(
-                              'https://www.gutenberg.org/ebooks/345',
-                              '_blank',
-                            ),
-                            child: Text(
-                              'Dracula',
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(
-                                    color: Colors.blue,
-                                    decoration: TextDecoration.underline,
-                                  ),
-                            ),
-                          ),
-                          Text(
-                            'and set the desired adult content level to G to catch the vampire seduction scene in chapter 3.',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
+                            const TextSpan(text: '.'),
+                          ],
+                        ),
                       ),
                     ],
                   ),
