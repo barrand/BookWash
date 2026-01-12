@@ -6,15 +6,9 @@
 ✅ Requirements and testing framework documented
 
 ## Next Steps
-- Change to 4 paragraphs instead of 8, for ease in reading
-- only show the differences in the review panel
 - look at all LLM instruction
-- make it keep the same voice in the aggressive clean
 - the request to not filter on violence isn't working, it is still trying to correct violence
-- If we verify the chapters meet rating scale, is it using language MPAA or something else? Also what if we fail the verify? I don't think this is working
-- Can we make the reviews go in the right order? Right now chapter 16 is before chapter 5
 - I don't have an idea of how many total paragraphs there are to review. I'd like to see an overall percent
-- make the right side editable again
 - Make the UI a bit more fun, add Icon to the header, with Emojis, fun language, images?
 - Make it so it handles if the user starts a book and then comes back
 - Update the github readme with more details on what works and doesn't
@@ -30,3 +24,5 @@
 -I don't think the cover image is getting put back together correctly
 - the update progress steps are not highlighting
 - do an aggressive pass after the verify fail.
+- Change to 4 paragraphs instead of 8, for ease in reading
+- make the right side editable again

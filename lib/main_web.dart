@@ -11,7 +11,9 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
 
+import 'models/bookwash_file.dart';
 import 'services/api_service.dart';
+import 'widgets/widgets.dart';
 
 void main() {
   runApp(const BookWashWebApp());
@@ -55,13 +57,25 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
 
   // Processing state
   bool isProcessing = false;
+  bool isCancelling = false;
   double progress = 0.0;
   String progressPhase = '';
 
+  // Language word filtering
+  final Map<String, bool> languageWordSelection = {
+    'fuck': true,
+    'shit': true,
+    'damn': true,
+    'hell': true,
+    'ass': true,
+    'bitch': true,
+    'bastard': true,
+  };
+
   // Content levels
-  int adultLevel = 2; // Default: PG
-  int violenceLevel = 3; // Default: PG-13
-  String selectedModel = 'gemini-2.0-flash';
+  int sexualContentLevel = 2; // Default: PG
+  int violenceLevel = 4; // Default: Unfiltered
+  String selectedModel = 'gemini-2.5-flash-lite';
 
   // Logs
   final List<String> logs = [];
@@ -70,6 +84,7 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
 
   // Change review
   int currentChangeIndex = 0;
+  bool _isAcceptingLanguage = false;
 
   @override
   void initState() {
@@ -229,6 +244,10 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
     }
   }
 
+  void _saveLanguageWords() {
+    // Web client does not persist selections locally yet.
+  }
+
   Future<void> _pickFile() async {
     // Create a file input element using package:web
     final input = web.HTMLInputElement()
@@ -301,9 +320,15 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
       _addLog('✅ File uploaded');
 
       // Start processing
+      final selectedWords = languageWordSelection.entries
+          .where((e) => e.value)
+          .map((e) => e.key)
+          .toList();
+
       await _api.startProcessing(
         sessionId: session.sessionId,
-        targetAdult: adultLevel,
+        languageWords: selectedWords,
+        targetAdult: sexualContentLevel,
         targetViolence: violenceLevel,
         model: selectedModel,
       );
@@ -315,6 +340,7 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
 
       // Stream status (subscription)
       final statusSub = _api.streamStatus(session.sessionId).listen((status) {
+        print('📡 Status update: phase=${status.phase}, progress=${status.progress}, status=${status.status}');
         setState(() {
           progress = status.progress / 100;
           progressPhase = status.phase;
@@ -352,9 +378,15 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
             });
             _addLog('✅ File uploaded');
 
+            final selectedWords = languageWordSelection.entries
+                .where((e) => e.value)
+                .map((e) => e.key)
+                .toList();
+
             await _api.startProcessing(
               sessionId: session.sessionId,
-              targetAdult: adultLevel,
+              languageWords: selectedWords,
+              targetAdult: sexualContentLevel,
               targetViolence: violenceLevel,
               model: selectedModel,
             );
@@ -513,6 +545,33 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
     });
   }
 
+  Future<void> _acceptAllLanguageChanges() async {
+    if (_session == null) return;
+
+    final languageChanges = _session!.changes.where((change) {
+      if (change.status != 'pending') return false;
+      final reason = change.reason.toLowerCase();
+      return reason.contains('language');
+    }).toList();
+
+    if (languageChanges.isEmpty) return;
+
+    setState(() => _isAcceptingLanguage = true);
+    try {
+      for (final change in languageChanges) {
+        await _api.updateChange(_session!.sessionId, change.id, 'accepted');
+        change.status = 'accepted';
+      }
+      setState(() {
+        _moveToNextPendingChange();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isAcceptingLanguage = false);
+      }
+    }
+  }
+
   void _moveToNextPendingChange() {
     final changes = _session?.changes ?? [];
     for (int i = 0; i < changes.length; i++) {
@@ -552,6 +611,26 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
     } catch (e) {
       _addLog('❌ Export failed: $e');
     }
+  }
+
+  // Helper getters to map progressPhase to CleaningProgressIndicator format
+  String get _indicatorPhase {
+    // progressPhase in web is simpler: 'converting', 'rating', 'cleaning', 'complete'
+    // The CleaningProgressIndicator expects: 'converting', 'rating', 'cleaning'
+    return progressPhase;
+  }
+
+  String get _indicatorSubPhase {
+    // Web backend doesn't provide sub-phase details yet,
+    // but we can infer from progress percentage during cleaning
+    if (progressPhase != 'cleaning') return '';
+
+    // Estimate sub-phase based on progress (cleaning is 50-100%)
+    if (progress < 0.625) return 'identifying';
+    if (progress < 0.75) return 'language';
+    if (progress < 0.875) return 'adult';
+    if (progress < 0.95) return 'violence';
+    return 'verifying';
   }
 
   @override
@@ -627,57 +706,70 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
 
                 const SizedBox(height: 16),
 
-                // Step 2: Content Levels
+                // Step 2: Sensitivity Settings
+                SensitivitySettingsCard(
+                  languageWordSelection: languageWordSelection,
+                  isProcessing: isProcessing,
+                  sexualContentLevel: sexualContentLevel,
+                  violenceLevel: violenceLevel,
+                  onWordChanged: (word, value) {
+                    setState(() => languageWordSelection[word] = value);
+                  },
+                  onSaveWords: _saveLanguageWords,
+                  onSexualLevelChanged: (v) =>
+                      setState(() => sexualContentLevel = v),
+                  onViolenceLevelChanged: (v) =>
+                      setState(() => violenceLevel = v),
+                ),
+
+                const SizedBox(height: 16),
+
+                // Step 3: Process Button
                 _buildCard(
-                  title: '2. Set Target Content Levels',
-                  child: Column(
-                    children: [
-                      _buildSlider(
-                        label: 'Adult Content',
-                        value: adultLevel,
-                        onChanged: isProcessing
-                            ? null
-                            : (v) => setState(() => adultLevel = v.toInt()),
+                  title: '3. Process',
+                  child: ElevatedButton.icon(
+                    onPressed: (selectedFileBytes != null && !isProcessing)
+                        ? _startProcessing
+                        : null,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Process Book'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 32,
+                        vertical: 16,
                       ),
-                      const SizedBox(height: 16),
-                      _buildSlider(
-                        label: 'Violence',
-                        value: violenceLevel,
-                        onChanged: isProcessing
-                            ? null
-                            : (v) => setState(() => violenceLevel = v.toInt()),
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton.icon(
-                        onPressed: (selectedFileBytes != null && !isProcessing)
-                            ? _startProcessing
-                            : null,
-                        icon: const Icon(Icons.play_arrow),
-                        label: const Text('Process Book'),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 32,
-                            vertical: 16,
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
 
-                // Step 3: Processing / Logs
+                // Step 4: Processing / Logs
                 if (isProcessing || logs.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   _buildCard(
-                    title: '3. Processing',
+                    title: '4. Processing',
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (isProcessing) ...[
+                          // Debug: Show current phase
+                          Text(
+                            'Phase: $_indicatorPhase | SubPhase: $_indicatorSubPhase | Progress: ${(progress * 100).toInt()}%',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
                           Row(
                             children: [
                               Expanded(
-                                child: LinearProgressIndicator(value: progress),
+                                child: CleaningProgressIndicator(
+                                  progress: progress,
+                                  phase: _indicatorPhase,
+                                  subPhase: _indicatorSubPhase,
+                                  current: 0,
+                                  total: 0,
+                                ),
                               ),
                               const SizedBox(width: 12),
                               TextButton.icon(
@@ -687,30 +779,6 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
                                 style: TextButton.styleFrom(
                                   foregroundColor: Colors.red,
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Phase: $progressPhase • ${(progress * 100).toInt()}%',
-                          ),
-                          const SizedBox(height: 8),
-                          // Phase badges
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              _phaseChip('converting', Icons.sync, Colors.blue),
-                              _phaseChip('rating', Icons.rule, Colors.orange),
-                              _phaseChip(
-                                'cleaning',
-                                Icons.cleaning_services,
-                                Colors.green,
-                              ),
-                              _phaseChip(
-                                'complete',
-                                Icons.done_all,
-                                Colors.purple,
                               ),
                             ],
                           ),
@@ -761,11 +829,58 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
                   ),
                 ],
 
-                // Step 4: Review Changes
+                // Step 5: Review Changes
                 if (_session?.status == 'review' &&
                     (_session?.changes.isNotEmpty ?? false)) ...[
                   const SizedBox(height: 16),
-                  _buildChangeReviewCard(),
+                  ChangeReviewCard(
+                    pendingChanges: _session!.changes
+                        .where((c) => c.status == 'pending')
+                        .map(
+                          (c) => PendingChangeEntry(
+                            chapter: _createAdapterChapter(c),
+                            change: _createAdapterChange(c),
+                          ),
+                        )
+                        .toList(),
+                    totalPendingCount: _session!.changes
+                        .where((c) => c.status == 'pending')
+                        .length,
+                    totalAcceptedCount: _session!.changes
+                        .where((c) => c.status == 'accepted')
+                        .length,
+                    totalRejectedCount: _session!.changes
+                        .where((c) => c.status == 'rejected')
+                        .length,
+                    currentChangeIndex: currentChangeIndex,
+                    isAcceptingLanguage: _isAcceptingLanguage,
+                    onPrevious: () => setState(() => currentChangeIndex--),
+                    onNext: () => setState(() => currentChangeIndex++),
+                    onAcceptAllLanguage: _acceptAllLanguageChanges,
+                    onAcceptAll: _acceptAllChanges,
+                    onExport: _exportEpub,
+                    onKeepCleaned: (editedText) async {
+                      final pendingChanges = _session!.changes
+                          .where((c) => c.status == 'pending')
+                          .toList();
+                      final change = pendingChanges[currentChangeIndex];
+                      await _api.updateChange(
+                        _session!.sessionId,
+                        change.id,
+                        'accepted',
+                      );
+                      setState(() {
+                        change.status = 'accepted';
+                        _moveToNextPendingChange();
+                      });
+                    },
+                    onKeepOriginal: () {
+                      final pendingChanges = _session!.changes
+                          .where((c) => c.status == 'pending')
+                          .toList();
+                      _rejectChange(pendingChanges[currentChangeIndex]);
+                    },
+                  ),
                 ],
               ],
             ),
@@ -838,206 +953,22 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
     );
   }
 
-  Widget _buildChangeReviewCard() {
-    final changes = _session?.changes ?? [];
-    final pendingCount = changes.where((c) => c.status == 'pending').length;
-    final acceptedCount = changes.where((c) => c.status == 'accepted').length;
-    final rejectedCount = changes.where((c) => c.status == 'rejected').length;
-
-    return _buildCard(
-      title: '4. Review Changes',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Stats
-          Row(
-            children: [
-              _buildStatChip('Pending', pendingCount, Colors.orange),
-              const SizedBox(width: 8),
-              _buildStatChip('Accepted', acceptedCount, Colors.green),
-              const SizedBox(width: 8),
-              _buildStatChip('Rejected', rejectedCount, Colors.red),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Quick actions
-          Row(
-            children: [
-              ElevatedButton.icon(
-                onPressed: pendingCount > 0 ? _acceptAllChanges : null,
-                icon: const Icon(Icons.check_circle),
-                label: const Text('Accept All'),
-              ),
-              const Spacer(),
-              ElevatedButton.icon(
-                onPressed: _exportEpub,
-                icon: const Icon(Icons.download),
-                label: const Text('Export EPUB'),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-              ),
-            ],
-          ),
-
-          if (pendingCount > 0) ...[
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
-
-            // Current change
-            if (currentChangeIndex < changes.length)
-              _buildChangeCard(changes[currentChangeIndex]),
-          ],
-        ],
-      ),
+  // Create adapter objects for ChangeReviewPanel
+  BookWashChapter _createAdapterChapter(ChangeItem change) {
+    return BookWashChapter(
+      number: change.chapter + 1,
+      title: change.chapterTitle,
+      rating: null,
+      contentLines: [],
     );
   }
 
-  Widget _buildStatChip(String label, int count, Color color) {
-    return Chip(
-      label: Text('$label: $count'),
-      backgroundColor: color.withValues(alpha: 0.2),
-    );
-  }
-
-  Widget _buildChangeCard(ChangeItem change) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              'Chapter ${change.chapter + 1}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            if (change.chapterTitle.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              Text(
-                change.chapterTitle,
-                style: TextStyle(color: Colors.grey[400]),
-              ),
-            ],
-          ],
-        ),
-        if (change.reason.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(
-            'Reason: ${change.reason}',
-            style: TextStyle(color: Colors.orange[300], fontSize: 12),
-          ),
-        ],
-        const SizedBox(height: 16),
-
-        // Side-by-side Original vs Cleaned with monospace font
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Original
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.06),
-                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Original',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      change.original,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            // Cleaned
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.06),
-                  border: Border.all(
-                    color: Colors.green.withValues(alpha: 0.3),
-                  ),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Cleaned',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      change.cleaned,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
-        // Accept/Reject buttons
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton.icon(
-              onPressed: () => _rejectChange(change),
-              icon: const Icon(Icons.close),
-              label: const Text('Reject'),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            ),
-            const SizedBox(width: 16),
-            ElevatedButton.icon(
-              onPressed: () => _acceptChange(change),
-              icon: const Icon(Icons.check),
-              label: const Text('Accept'),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  // Build a phase chip with highlight when active
-  Widget _phaseChip(String phase, IconData icon, Color color) {
-    final bool active =
-        progressPhase == phase ||
-        (phase == 'complete' &&
-            (progress >= 0.99 || (_session?.status == 'review')));
-    return Chip(
-      avatar: Icon(icon, size: 16, color: active ? Colors.white : color),
-      label: Text(
-        phase[0].toUpperCase() + phase.substring(1),
-        style: TextStyle(
-          color: active ? Colors.white : Colors.white70,
-          fontWeight: active ? FontWeight.bold : FontWeight.normal,
-        ),
-      ),
-      backgroundColor: active ? color : color.withValues(alpha: 0.2),
-      shape: StadiumBorder(
-        side: BorderSide(color: color.withValues(alpha: 0.5)),
-      ),
+  BookWashChange _createAdapterChange(ChangeItem change) {
+    return BookWashChange(
+      id: change.id,
+      original: change.original,
+      cleaned: change.cleaned,
+      cleanedFor: [change.reason], // Convert reason to cleanedFor list
     );
   }
 }

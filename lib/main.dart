@@ -1100,7 +1100,9 @@ class _BookWashHomeState extends State<BookWashHome> {
               isLoading: isLoadingFile,
               isProcessing: isProcessing,
               fileName: selectedFileName,
-              parsedEpub: parsedEpub,
+              fileDetails: parsedEpub != null
+                  ? '${parsedEpub!.chapters.length} chapters, ${parsedEpub!.totalParagraphs} paragraphs'
+                  : null,
               onSelectFile: selectFile,
             ),
             const SizedBox(height: 20),
@@ -1399,196 +1401,49 @@ class _BookWashHomeState extends State<BookWashHome> {
 
             // Review Changes Section - shows after processing with bookwash file
             if (bookwashFile != null && !isProcessing)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.rate_review, size: 24),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Step 4: Review Changes',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const Spacer(),
-                          // Stats
-                          ReviewStatChip(
-                            label: 'Pending',
-                            count: _allPendingChanges.length,
-                            color: Colors.orange,
-                          ),
-                          const SizedBox(width: 8),
-                          ReviewStatChip(
-                            label: 'Accepted',
-                            count: _allChanges
-                                .where((c) => c.value.status == 'accepted')
-                                .length,
-                            color: Colors.green,
-                          ),
-                          const SizedBox(width: 8),
-                          ReviewStatChip(
-                            label: 'Rejected',
-                            count: _allChanges
-                                .where((c) => c.value.status == 'rejected')
-                                .length,
-                            color: Colors.red,
-                          ),
-                        ],
+              ChangeReviewCard(
+                pendingChanges: _allPendingChanges
+                    .map(
+                      (e) => PendingChangeEntry(
+                        chapter: bookwashFile!.chapters[e.key],
+                        change: e.value,
                       ),
-                      const SizedBox(height: 16),
-
-                      // Chapter selector and change review
-                      if (_allPendingChanges.isNotEmpty) ...[
-                        // Current change display
-                        ChangeReviewPanel(
-                          chapter:
-                              bookwashFile!
-                                  .chapters[_allPendingChanges[currentReviewChangeIndex]
-                                  .key],
-                          change: _allPendingChanges[currentReviewChangeIndex]
-                              .value,
-                          onKeepOriginal: () => _rejectChange(
-                            _allPendingChanges[currentReviewChangeIndex].value,
-                          ),
-                          onKeepCleaned: (editedText) => _acceptChange(
-                            _allPendingChanges[currentReviewChangeIndex].value,
-                            editedText: editedText,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        // Navigation and action buttons - fixed layout to prevent jumping
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            // Left side: Navigation controls with fixed width
-                            SizedBox(
-                              width: 320,
-                              child: Row(
-                                children: [
-                                  ElevatedButton.icon(
-                                    onPressed: currentReviewChangeIndex > 0
-                                        ? () {
-                                            setState(() {
-                                              currentReviewChangeIndex--;
-                                              selectedReviewChapter =
-                                                  _allPendingChanges[currentReviewChangeIndex]
-                                                      .key;
-                                            });
-                                          }
-                                        : null,
-                                    icon: const Icon(Icons.arrow_back),
-                                    label: const Text('Previous'),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  // Fixed width for counter to prevent shifting
-                                  SizedBox(
-                                    width: 70,
-                                    child: Text(
-                                      '${currentReviewChangeIndex + 1} / ${_allPendingChanges.length}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  ElevatedButton.icon(
-                                    onPressed:
-                                        currentReviewChangeIndex <
-                                            _allPendingChanges.length - 1
-                                        ? () {
-                                            setState(() {
-                                              currentReviewChangeIndex++;
-                                              selectedReviewChapter =
-                                                  _allPendingChanges[currentReviewChangeIndex]
-                                                      .key;
-                                            });
-                                          }
-                                        : null,
-                                    icon: const Icon(Icons.arrow_forward),
-                                    label: const Text('Next'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            // Right side: Action buttons - always at same position
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                ElevatedButton.icon(
-                                  onPressed: _acceptAllLanguageChanges,
-                                  icon: const Text(
-                                    '#!@',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  label: const Text('Accept All Language'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF7B1FA2),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 12,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                ElevatedButton.icon(
-                                  onPressed: _acceptAllChanges,
-                                  icon: const Icon(Icons.done_all, size: 18),
-                                  label: const Text('Accept All'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF1976D2),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 12,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ] else ...[
-                        const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(24.0),
-                            child: Column(
-                              children: [
-                                Icon(
-                                  Icons.check_circle,
-                                  size: 48,
-                                  color: Colors.green,
-                                ),
-                                SizedBox(height: 8),
-                                Text(
-                                  'All changes reviewed!',
-                                  style: TextStyle(fontSize: 16),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
+                    )
+                    .toList(),
+                totalPendingCount: _allPendingChanges.length,
+                totalAcceptedCount: _allChanges
+                    .where((c) => c.value.status == 'accepted')
+                    .length,
+                totalRejectedCount: _allChanges
+                    .where((c) => c.value.status == 'rejected')
+                    .length,
+                currentChangeIndex: currentReviewChangeIndex,
+                isAcceptingLanguage: false,
+                onPrevious: () {
+                  setState(() {
+                    currentReviewChangeIndex--;
+                    selectedReviewChapter =
+                        _allPendingChanges[currentReviewChangeIndex].key;
+                  });
+                },
+                onNext: () {
+                  setState(() {
+                    currentReviewChangeIndex++;
+                    selectedReviewChapter =
+                        _allPendingChanges[currentReviewChangeIndex].key;
+                  });
+                },
+                onAcceptAllLanguage: _acceptAllLanguageChanges,
+                onAcceptAll: _acceptAllChanges,
+                onExport: _exportToEpub,
+                onKeepCleaned: (editedText) => _acceptChange(
+                  _allPendingChanges[currentReviewChangeIndex].value,
+                  editedText: editedText,
+                ),
+                onKeepOriginal: () => _rejectChange(
+                  _allPendingChanges[currentReviewChangeIndex].value,
                 ),
               ),
-
-            // Export EPUB Button - shows after processing
-            if (bookwashFile != null && !isProcessing) ...[
-              const SizedBox(height: 20),
-              ExportEpubButton(onExport: _exportToEpub),
-            ],
           ],
         ),
       ),

@@ -1,48 +1,39 @@
 """
-BookWash Web App - FastAPI backend for content moderation of EPUBs.
-Deployed on Render with server-side Gemini API key.
+BookWash Web API Server
 
-Features:
-- Live logging via Server-Sent Events (SSE)
-- Session-based processing workflow
-- Change review UI before export
+FastAPI backend that wraps the Python scripts and provides a REST API
+for the Flutter web frontend.
 """
 
-import os
-import sys
-import json
-import uuid
 import asyncio
-import tempfile
-import secrets
+import json
+import os
 import subprocess
-import shutil
+import sys
+import uuid
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
-import time
+from typing import Dict, List, Optional
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends, Request, BackgroundTasks
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse, Response
-from fastapi.staticfiles import StaticFiles
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from starlette.responses import StreamingResponse as SSEStreamingResponse
+import queue
+import threading
 
 # Add scripts directory to path for imports
-SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
-SESSIONS_DIR = Path(__file__).parent / "sessions"
-SESSIONS_DIR.mkdir(exist_ok=True)
+SCRIPT_DIR = Path(__file__).parent.parent / "scripts"
+sys.path.insert(0, str(SCRIPT_DIR))
 
-# Flutter web build path (relative to webapp directory)
-FLUTTER_WEB_BUILD = Path(__file__).parent.parent / "build" / "web"
+# Import bookwash_llm for parsing
+import bookwash_llm
 
-app = FastAPI(
-    title="BookWash",
-    description="Content moderation for EPUB books using AI",
-    version="1.0.0"
-)
+app = FastAPI(title="BookWash API", version="1.0.0")
 
-# CORS for frontend
+# CORS middleware for Flutter web
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -51,985 +42,452 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory session storage (for live logs and state)
-sessions: Dict[str, Dict[str, Any]] = {}
-# Track background processing tasks by session_id
-processing_tasks: Dict[str, asyncio.Task] = {}
+# Sessions storage
+SESSIONS_DIR = Path(__file__).parent / "sessions"
+SESSIONS_DIR.mkdir(exist_ok=True)
+sessions: Dict[str, dict] = {}
 
-@app.on_event("startup")
-async def startup_event():
-    """Start background tasks on app startup."""
-    asyncio.create_task(cleanup_old_sessions())
-    print("🚀 BookWash started - session cleanup task running (14 day retention)")
 
-def save_session_to_disk(session_id: str):
-    """Persist session state to disk."""
-    if session_id not in sessions:
-        return
-    session = sessions[session_id]
-    session_file = SESSIONS_DIR / session_id / "session.json"
-    session_file.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Don't serialize file handles or other non-JSON types
-    serializable = {
-        k: v for k, v in session.items() 
-        if k not in ["file_handle"] and isinstance(v, (str, int, float, bool, list, dict, type(None)))
-    }
-    session_file.write_text(json.dumps(serializable, indent=2))
+# Pydantic models
+class ProcessRequest(BaseModel):
+    language_words: List[str] = []
+    adult_level: int = 2
+    violence_level: int = 3
+    model: str = "gemini-2.0-flash"
 
-def load_session_from_disk(session_id: str) -> Optional[Dict[str, Any]]:
-    """Load session state from disk."""
-    session_file = SESSIONS_DIR / session_id / "session.json"
-    if session_file.exists():
-        return json.loads(session_file.read_text())
-    return None
 
-def update_session_access(session_id: str):
-    """Update last_accessed timestamp for a session."""
-    if session_id in sessions:
-        sessions[session_id]["last_accessed"] = time.time()
-        save_session_to_disk(session_id)
+class ChangeAction(BaseModel):
+    change_id: str
+    action: str  # 'accept' or 'reject'
+    edited_text: Optional[str] = None
 
-def get_session_dir(session_id: str) -> Path:
-    """Helper to get the on-disk session directory."""
+
+class SessionResponse(BaseModel):
+    session_id: str
+    status: str
+    filename: str
+    progress: float = 0.0
+    phase: str = ""
+    changes: List[dict] = []
+    logs: List[dict] = []
+
+
+# Helper functions
+def get_session_path(session_id: str) -> Path:
     return SESSIONS_DIR / session_id
 
-async def cleanup_old_sessions():
-    """Background task to clean up sessions older than 14 days with no activity."""
-    RETENTION_DAYS = 14
-    CLEANUP_INTERVAL_SECONDS = 86400  # 24 hours
+
+def save_session(session_id: str, data: dict):
+    session_path = get_session_path(session_id)
+    session_path.mkdir(exist_ok=True)
+    with open(session_path / "session.json", "w") as f:
+        json.dump(data, f)
+    sessions[session_id] = data
+
+
+def load_session(session_id: str) -> Optional[dict]:
+    if session_id in sessions:
+        return sessions[session_id]
     
-    while True:
-        try:
-            await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
-            
-            cutoff_time = time.time() - (RETENTION_DAYS * 86400)
-            deleted_count = 0
-            
-            # Check all session directories on disk
-            if SESSIONS_DIR.exists():
-                for session_dir in SESSIONS_DIR.iterdir():
-                    if not session_dir.is_dir():
-                        continue
-                    
-                    session_id = session_dir.name
-                    session_file = session_dir / "session.json"
-                    
-                    if not session_file.exists():
-                        continue
-                    
-                    try:
-                        session_data = json.loads(session_file.read_text())
-                        last_accessed = session_data.get("last_accessed", session_data.get("created_at", 0))
-                        
-                        if last_accessed < cutoff_time:
-                            # Delete session directory
-                            shutil.rmtree(session_dir)
-                            
-                            # Remove from memory if present
-                            if session_id in sessions:
-                                del sessions[session_id]
-                            
-                            deleted_count += 1
-                            print(f"🗑️  Cleaned up inactive session: {session_id}")
-                    
-                    except Exception as e:
-                        print(f"⚠️  Error cleaning session {session_id}: {e}")
-            
-            if deleted_count > 0:
-                print(f"✅ Cleanup completed: {deleted_count} session(s) deleted (inactive > {RETENTION_DAYS} days)")
+    session_path = get_session_path(session_id)
+    session_file = session_path / "session.json"
+    if session_file.exists():
+        with open(session_file) as f:
+            data = json.load(f)
+            sessions[session_id] = data
+            return data
+    return None
+
+
+async def log_message(session_id: str, message: str):
+    """Add a log message to the session"""
+    session = load_session(session_id)
+    if session:
+        if "logs" not in session:
+            session["logs"] = []
+        session["logs"].append({
+            "timestamp": datetime.now().isoformat(),
+            "message": message
+        })
+        save_session(session_id, session)
+
+
+async def process_book(session_id: str, epub_path: Path, request: ProcessRequest):
+    """Background task to process the book"""
+    print(f"\n=== PROCESS_BOOK BACKGROUND TASK STARTED ===")
+    print(f"Session: {session_id}, File: {epub_path.name}")
+    try:
+        session = load_session(session_id)
+        session["status"] = "processing"
+        session["phase"] = "converting"
+        session["progress"] = 0
+        save_session(session_id, session)
+        print(f"Phase: converting, Progress: 0%")
         
-        except Exception as e:
-            print(f"❌ Error in cleanup task: {e}")
-
-# Basic auth security (optional)
-security = HTTPBasic(auto_error=False)
-
-def verify_credentials(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
-    """Verify basic auth credentials. Skip if APP_PASSWORD not set."""
-    app_password = os.environ.get("APP_PASSWORD")
-    
-    if not app_password:
-        return True
-    
-    if not credentials:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Basic"},
+        await log_message(session_id, "📚 Converting EPUB to BookWash format...")
+        
+        # Convert EPUB to BookWash using subprocess
+        bookwash_path = get_session_path(session_id) / f"{epub_path.stem}.bookwash"
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "epub_to_bookwash.py"), str(epub_path), str(bookwash_path)],
+            capture_output=True,
+            text=True
         )
-    
-    app_username = os.environ.get("APP_USERNAME", "bookwash")
-    correct_username = secrets.compare_digest(credentials.username, app_username)
-    correct_password = secrets.compare_digest(credentials.password, app_password)
-    
-    if not (correct_username and correct_password):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Basic"},
+        if result.returncode != 0:
+            raise ValueError(f"EPUB conversion failed: {result.stderr}")
+        
+        # Parse the created bookwash file
+        bw = bookwash_llm.parse_bookwash(bookwash_path)
+        
+        session["progress"] = 10
+        save_session(session_id, session)
+        
+        await log_message(session_id, f"✅ Converted to BookWash format ({len(bw.chapters)} chapters)")
+        
+        # Get API key
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not set")
+        
+        # Create client with language words
+        language_words = request.language_words if request.language_words else []
+        filter_types = []
+        if language_words:
+            filter_types.append("language")
+        if request.adult_level < 4:
+            filter_types.append("sexual")
+        if request.violence_level < 4:
+            filter_types.append("violence")
+        
+        # Load the BookWash file
+        bw = bookwash_llm.parse_bookwash(bookwash_path)
+        
+        filter_types_str = ",".join(filter_types) if filter_types else "sexual,violence"
+        
+        client = bookwash_llm.GeminiClient(
+            api_key=api_key,
+            model=request.model,
+            language_words=language_words,
+            filter_types=filter_types_str
         )
-    return True
+        
+        # Rate chapters
+        session["phase"] = "rating"
+        session["progress"] = 20
+        save_session(session_id, session)
+        print(f"Phase: rating, Progress: 20%")
+        
+        await log_message(session_id, f"⭐ Rating {len(bw.chapters)} chapters...")
+        print(f"Starting rating with {len(bw.chapters)} chapters...")
+        bookwash_llm.cmd_rate(bw, client, request.adult_level, request.violence_level, filepath=bookwash_path, verbose=False)
+        bookwash_llm.write_bookwash(bw, bookwash_path)
+        
+        # Count flagged chapters - check status fields
+        flagged = sum(1 for ch in bw.chapters 
+                     if ch.language_status == 'pending' or 
+                        ch.adult_status == 'pending' or 
+                        ch.violence_status == 'pending')
+        print(f"Rating complete: {flagged}/{len(bw.chapters)} chapters flagged")
+        
+        session["progress"] = 40
+        save_session(session_id, session)
+        
+        await log_message(session_id, f"✅ Rating complete: {flagged}/{len(bw.chapters)} chapters flagged for cleaning")
+        
+        # Clean chapters
+        session["phase"] = "cleaning"
+        session["progress"] = 50
+        save_session(session_id, session)
+        print(f"Phase: cleaning, Progress: 50%")
+        
+        if flagged > 0:
+            await log_message(session_id, f"🧹 Cleaning {flagged} flagged chapters...")
+            print(f"Starting cleaning for {flagged} chapters...")
+            bookwash_llm.cmd_clean_passes(bw, client, bookwash_path, verbose=False)
+            bookwash_llm.write_bookwash(bw, bookwash_path)
+            print(f"Cleaning complete")
+        else:
+            await log_message(session_id, "✨ No chapters need cleaning!")
+            print("No chapters need cleaning")
+        
+        session["progress"] = 90
+        save_session(session_id, session)
+        
+        await log_message(session_id, "✅ Processing complete - ready for review")
+        print("Processing complete, extracting changes...")
+        
+        # Extract changes for review (parse #CHANGE blocks from content)
+        changes = []
+        for chapter in bw.chapters:
+            # Parse change blocks from content_lines
+            in_change = False
+            change_id = None
+            change_reason = "Content modification"
+            change_original = []
+            change_cleaned = []
+            in_original = False
+            in_cleaned = False
+            
+            for line in chapter.content_lines:
+                if line.startswith('#CHANGE:'):
+                    in_change = True
+                    change_id = line.replace('#CHANGE:', '').strip()
+                    change_reason = "Content modification"
+                    change_original = []
+                    change_cleaned = []
+                    in_original = False
+                    in_cleaned = False
+                elif line.startswith('#REASON:') and in_change:
+                    change_reason = line.replace('#REASON:', '').strip()
+                elif line == '#END' and in_change:
+                    # Save this change
+                    changes.append({
+                        "id": change_id,
+                        "chapter": chapter.number,
+                        "chapter_title": chapter.title or f"Chapter {chapter.number}",
+                        "original": '\n'.join(change_original),
+                        "cleaned": '\n'.join(change_cleaned),
+                        "reason": change_reason,
+                        "status": "pending"
+                    })
+                    in_change = False
+                elif in_change:
+                    if line == '#ORIGINAL':
+                        in_original = True
+                        in_cleaned = False
+                    elif line == '#CLEANED':
+                        in_original = False
+                        in_cleaned = True
+                    elif in_original:
+                        change_original.append(line)
+                    elif in_cleaned:
+                        change_cleaned.append(line)
+        
+        session["status"] = "review"
+        session["phase"] = "complete"
+        session["progress"] = 100
+        session["changes"] = changes
+        session["bookwash_path"] = str(bookwash_path)
+        save_session(session_id, session)
+        print(f"\n=== PROCESSING COMPLETE ===")
+        print(f"Status: review, Changes: {len(changes)}")
+        print(f"Session saved successfully\n")
+        
+        await log_message(session_id, f"✅ Processing complete! {len(changes)} changes to review.")
+        
+    except Exception as e:
+        print(f"\n=== ERROR IN PROCESS_BOOK ===")
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        session = load_session(session_id)
+        session["status"] = "error"
+        session["error"] = str(e)
+        save_session(session_id, session)
+        await log_message(session_id, f"❌ Error: {str(e)}")
 
 
-# Serve Flutter web build static files
-if FLUTTER_WEB_BUILD.exists():
-    app.mount("/assets", StaticFiles(directory=str(FLUTTER_WEB_BUILD / "assets")), name="assets")
-    app.mount("/icons", StaticFiles(directory=str(FLUTTER_WEB_BUILD / "icons")), name="icons")
-
-# Legacy static files (if Flutter build not available, fall back to webapp/static)
-static_path = Path(__file__).parent / "static"
-if static_path.exists():
-    app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
-
-
-@app.get("/", response_class=HTMLResponse)
-async def home(authenticated: bool = Depends(verify_credentials)):
-    """Serve the main page - Flutter web build or fallback."""
-    # Try Flutter web build first
-    flutter_index = FLUTTER_WEB_BUILD / "index.html"
-    if flutter_index.exists():
-        # Read and lightly transform index.html to disable SW caching in dev
-        html = flutter_index.read_text()
-        ts = int(datetime.now().timestamp())
-        # Cache-bust main assets
-        html = html.replace("main.dart.js", f"main.dart.js?v={ts}")
-        html = html.replace("flutter_bootstrap.js", f"flutter_bootstrap.js?v={ts}")
-        html = html.replace("flutter_service_worker.js", f"flutter_service_worker.js?v={ts}")
-        # Disable service worker registration in dev
-        html = html.replace("navigator.serviceWorker.register", "/* dev: sw disabled */ navigator.serviceWorker && navigator.serviceWorker.unregister")
-        return html
-    
-    # Fall back to legacy static HTML
-    legacy_index = Path(__file__).parent / "static" / "index.html"
-    if legacy_index.exists():
-        return legacy_index.read_text()
-    
-    return "<h1>BookWash - No frontend available. Run 'flutter build web --target lib/main_web.dart' first.</h1>"
-
-
-@app.get("/api/health")
-async def health():
-    """Health check endpoint."""
-    return {"status": "ok", "version": "1.0.0"}
+# API Routes
+@app.get("/api")
+async def api_root():
+    return {"message": "BookWash API", "version": "1.0.0"}
 
 
 @app.post("/api/upload")
-async def upload_epub(
+async def upload_file(
     file: UploadFile = File(...),
-    authenticated: bool = Depends(verify_credentials)
-):
-    """
-    Upload an EPUB file and create a processing session.
-    Returns a session ID for subsequent operations.
-    """
+    background_tasks: BackgroundTasks = None
+) -> SessionResponse:
+    """Upload an EPUB file and create a processing session"""
+    
     if not file.filename.endswith('.epub'):
-        raise HTTPException(status_code=400, detail="File must be an EPUB")
+        raise HTTPException(status_code=400, detail="Only EPUB files are supported")
     
     # Create session
     session_id = str(uuid.uuid4())
-    session_dir = SESSIONS_DIR / session_id
-    session_dir.mkdir(exist_ok=True)
+    session_path = get_session_path(session_id)
+    session_path.mkdir(exist_ok=True)
     
     # Save uploaded file
-    epub_path = session_dir / file.filename
-    with open(epub_path, 'wb') as f:
+    epub_path = session_path / file.filename
+    with open(epub_path, "wb") as f:
         content = await file.read()
         f.write(content)
     
-    # Initialize session state
-    now = time.time()
-    sessions[session_id] = {
-        "id": session_id,
+    # Create session
+    session = {
+        "session_id": session_id,
+        "status": "created",
         "filename": file.filename,
         "epub_path": str(epub_path),
-        "bookwash_path": None,
-        "status": "uploaded",
-        "logs": [],
-        "progress": 0,
-        "phase": "idle",
-        "changes": [],
-        "created": datetime.now().isoformat(),
-        "created_at": now,
-        "last_accessed": now
+        "created_at": datetime.now().isoformat(),
+        "logs": []
     }
-    save_session_to_disk(session_id)
+    save_session(session_id, session)
     
-    return {
-        "session_id": session_id,
-        "filename": file.filename,
-        "status": "uploaded"
-    }
-
-
-@app.get("/api/sessions")
-async def list_sessions(authenticated: bool = Depends(verify_credentials)):
-    """List all sessions available on disk with basic metadata."""
-    items = []
-    # Prefer in-memory sessions first
-    for s in sessions.values():
-        items.append({
-            "id": s.get("id"),
-            "filename": s.get("filename"),
-            "status": s.get("status"),
-            "progress": s.get("progress", 0),
-            "phase": s.get("phase", ""),
-            "created_at": s.get("created_at"),
-            "last_accessed": s.get("last_accessed"),
-            "epub_path": s.get("epub_path"),
-            "bookwash_path": s.get("bookwash_path")
-        })
-    
-    # Also include sessions persisted to disk that may not be in memory
-    if SESSIONS_DIR.exists():
-        for session_dir in SESSIONS_DIR.iterdir():
-            if not session_dir.is_dir():
-                continue
-            sid = session_dir.name
-            # Avoid duplicates for sessions already included from memory
-            if any(i.get("id") == sid for i in items):
-                continue
-            session_file = session_dir / "session.json"
-            if session_file.exists():
-                try:
-                    s = json.loads(session_file.read_text())
-                    items.append({
-                        "id": s.get("id", sid),
-                        "filename": s.get("filename"),
-                        "status": s.get("status"),
-                        "progress": s.get("progress", 0),
-                        "phase": s.get("phase", ""),
-                        "created_at": s.get("created_at"),
-                        "last_accessed": s.get("last_accessed"),
-                        "epub_path": s.get("epub_path"),
-                        "bookwash_path": s.get("bookwash_path")
-                    })
-                except Exception as e:
-                    # Skip unreadable sessions
-                    print(f"⚠️  Unable to read session {sid}: {e}")
-                    continue
-    
-    # Sort by last_accessed desc
-    items.sort(key=lambda x: x.get("last_accessed", 0) or 0, reverse=True)
-    return {"sessions": items}
+    return SessionResponse(**session)
 
 
 @app.post("/api/process/{session_id}")
 async def start_processing(
     session_id: str,
-    background_tasks: BackgroundTasks,
-    target_language: int = Form(2),
-    target_adult: int = Form(2),
-    target_violence: int = Form(3),
-    model: str = Form("gemini-2.5-flash-lite"),
-    authenticated: bool = Depends(verify_credentials)
+    request: ProcessRequest,
+    background_tasks: BackgroundTasks
 ):
-    """
-    Start processing an uploaded EPUB. 
-    Progress can be monitored via /api/logs/{session_id} SSE endpoint.
-    """
-    # Load from disk if not in memory
-    if session_id not in sessions:
-        loaded = load_session_from_disk(session_id)
-        if loaded:
-            sessions[session_id] = loaded
-        else:
-            raise HTTPException(status_code=404, detail="Session not found")
+    """Start processing a session"""
+    print(f"\n=== START PROCESSING CALLED ===")
+    print(f"Session ID: {session_id}")
+    print(f"Request: adult={request.adult_level}, violence={request.violence_level}, model={request.model}")
+    print(f"Language words: {request.language_words}")
     
-    session = sessions[session_id]
-    update_session_access(session_id)
-    
-    if session["status"] not in ["uploaded", "error"]:
-        raise HTTPException(status_code=400, detail=f"Cannot process session in {session['status']} state")
-    
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
-    
-    # Update session state
-    session["status"] = "processing"
-    session["logs"] = []
-    session["progress"] = 0
-    session["phase"] = "converting"
-    session["target_language"] = target_language
-    session["target_adult"] = target_adult
-    session["target_violence"] = target_violence
-    session["model"] = model
-    
-    # Start background processing
-    background_tasks.add_task(
-        process_book_async,
-        session_id,
-        api_key,
-        target_language,
-        target_adult,
-        target_violence,
-        model
-    )
-    
-    return {"status": "processing", "session_id": session_id}
-
-
-async def process_book_async(
-    session_id: str,
-    api_key: str,
-    target_language: int,
-    target_adult: int,
-    target_violence: int,
-    model: str
-):
-    """Background task to process the book."""
-    session = sessions.get(session_id)
+    session = load_session(session_id)
     if not session:
-        return
+        print(f"ERROR: Session {session_id} not found")
+        raise HTTPException(status_code=404, detail="Session not found")
     
-    process = None  # Track subprocess for cancellation
+    epub_path = Path(session["epub_path"])
+    if not epub_path.exists():
+        print(f"ERROR: EPUB not found at {epub_path}")
+        raise HTTPException(status_code=404, detail="EPUB file not found")
     
-    def add_log(message: str):
-        session["logs"].append({
-            "time": datetime.now().isoformat(),
-            "message": message
-        })
-        # Persist every 10 logs
-        if len(session["logs"]) % 10 == 0:
-            save_session_to_disk(session_id)
+    print(f"Starting background task for {epub_path.name}")
+    # Start background processing
+    background_tasks.add_task(process_book, session_id, epub_path, request)
     
-    try:
-        epub_path = Path(session["epub_path"])
-        session_dir = epub_path.parent
-        bookwash_path = session_dir / f"{epub_path.stem}.bookwash"
-        
-        add_log("📚 Starting BookWash processing...")
-        add_log(f"📖 Input: {epub_path.name}")
-        
-        # Step 1: Convert EPUB to .bookwash
-        add_log("")
-        add_log("═══════════════════════════════════════════")
-        add_log("📝 Step 1: Converting EPUB to .bookwash format...")
-        add_log("═══════════════════════════════════════════")
-        session["phase"] = "converting"
-        session["progress"] = 5
-        save_session_to_disk(session_id)
-        
-        result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "epub_to_bookwash.py"),
-             str(epub_path), str(bookwash_path)],
-            capture_output=True, text=True, timeout=120
-        )
-        
-        if result.returncode != 0:
-            raise Exception(f"EPUB conversion failed: {result.stderr}")
-        
-        add_log("✅ EPUB converted to .bookwash format")
-        session["bookwash_path"] = str(bookwash_path)
-        
-        # Step 2: Rate and clean with LLM
-        add_log("")
-        add_log("═══════════════════════════════════════════")
-        add_log("🤖 Step 2: Rating and cleaning content with AI...")
-        add_log("═══════════════════════════════════════════")
-        
-        rating_names = {1: "G", 2: "PG", 3: "PG-13", 4: "R", 5: "Unrated"}
-        add_log(f"Target levels: Language={rating_names.get(target_language, 'PG')}, "
-                f"Adult={rating_names.get(target_adult, 'PG')}, "
-                f"Violence={rating_names.get(target_violence, 'PG-13')}")
-        
-        session["phase"] = "rating"
-        session["progress"] = 10
-        save_session_to_disk(session_id)
-        
-        # Run the LLM script and capture output line by line (async)
-        env = os.environ.copy()
-        env["GEMINI_API_KEY"] = api_key
-        env["PYTHONUNBUFFERED"] = "1"
-        
-        process = await asyncio.create_subprocess_exec(
-            sys.executable, "-u", str(SCRIPTS_DIR / "bookwash_llm.py"),
-            "--rate", "--clean",
-            "--language", str(target_language),
-            "--sexual", str(target_adult),
-            "--violence", str(target_violence),
-            "--model", model,
-            "--output-dir", str(session_dir),
-            str(bookwash_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=env
-        )
-        
-        # Store process in session for cancellation
-        session["process_pid"] = process.pid
-        
-        add_log(f"⏱️ Using model: {model}")
-        add_log("")
-        
-        # Stream output to logs (async) with heartbeat if quiet
-        last_output = time.time()
-        HEARTBEAT_SECONDS = 30
-        while True:
-            try:
-                line_bytes = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
-            except asyncio.TimeoutError:
-                # No output in the last second; send heartbeat if quiet long enough
-                if time.time() - last_output >= HEARTBEAT_SECONDS:
-                    add_log("⏳ Heartbeat: waiting on Gemini API response...")
-                    last_output = time.time()
-                # Continue looping
-                continue
-            
-            if not line_bytes:
-                break
-            line = line_bytes.decode().rstrip()
-            if line:
-                last_output = time.time()
-                add_log(line)
-                
-                # Parse progress from output
-                progress_changed = False
-                if "[" in line and "/" in line and "]" in line:
-                    try:
-                        match = line.split("[")[1].split("]")[0]
-                        current, total = match.split("/")
-                        progress_pct = int(current) / int(total)
-                        if "Rating" in session.get("phase", "") or session["progress"] < 50:
-                            session["phase"] = "rating"
-                            session["progress"] = 10 + int(progress_pct * 40)
-                            progress_changed = True
-                        else:
-                            session["phase"] = "cleaning"
-                            session["progress"] = 50 + int(progress_pct * 45)
-                            progress_changed = True
-                    except:
-                        pass
-                
-                if "Cleaning" in line and "chapters" in line:
-                    session["phase"] = "cleaning"
-                    session["progress"] = 50
-                    progress_changed = True
-                elif "No chapters need cleaning" in line:
-                    session["phase"] = "cleaning"
-                    session["progress"] = 95
-                    progress_changed = True
-                
-                # Save on progress changes to survive restarts
-                if progress_changed:
-                    save_session_to_disk(session_id)
-        
-        await process.wait()
-        
-        if process.returncode != 0:
-            raise Exception("LLM processing failed")
-        
-        add_log("✅ Content rated and cleaned")
-        session["progress"] = 95
-        
-        # Step 3: Parse the bookwash file to extract changes
-        add_log("")
-        add_log("═══════════════════════════════════════════")
-        add_log("📋 Step 3: Extracting changes for review...")
-        add_log("═══════════════════════════════════════════")
-        
-        changes = parse_bookwash_changes(str(bookwash_path))
-        session["changes"] = changes
-        
-        pending_count = len([c for c in changes if c.get("status") == "pending"])
-        add_log(f"✅ Found {pending_count} pending changes to review")
-        
-        session["progress"] = 100
-        session["phase"] = "complete"
-        session["status"] = "review"
-        save_session_to_disk(session_id)
-        
-        add_log("")
-        add_log("═══════════════════════════════════════════")
-        add_log("🎉 Processing complete!")
-        add_log("═══════════════════════════════════════════")
-        add_log("Review changes below, then export when ready.")
-        
-    except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n{traceback.format_exc()}"
-        add_log(f"❌ Error: {str(e)}")
-        add_log(f"Traceback: {traceback.format_exc()}")
-        session["status"] = "error"
-        session["error"] = error_detail
-        session["progress"] = session.get("progress", 0)  # Keep last progress
-        session["phase"] = session.get("phase", "error")
-        save_session_to_disk(session_id)
+    session["status"] = "processing"
+    session["phase"] = "converting"  # Set initial phase
+    session["progress"] = 0
+    save_session(session_id, session)
+    print(f"Session status set to 'processing', returning response")
+    
+    return {"message": "Processing started", "session_id": session_id}
 
 
-def parse_bookwash_changes(bookwash_path: str) -> list:
-    """Parse a .bookwash file and extract all changes."""
-    changes = []
-    
-    with open(bookwash_path, 'r') as f:
-        content = f.read()
-    
-    lines = content.split('\n')
-    chapter_count = 0
-    current_chapter_title = ""
-    current_change = None
-    in_original = False
-    in_cleaned = False
-    original_lines = []
-    cleaned_lines = []
-    
-    for line in lines:
-        if line.startswith('#SECTION:'):
-            chapter_count += 1
-            current_chapter_title = line.split(':', 1)[1].strip()
-        elif line.startswith('#CHAPTER:'):
-            # Legacy format support
-            chapter_count = int(line.split(':')[1].strip())
-            current_chapter_title = f"Chapter {chapter_count}"
-        elif line.startswith('#TITLE:') and chapter_count > 0:
-            # Only update title if it differs from section label
-            title = line.split(':', 1)[1].strip()
-            if title != current_chapter_title:
-                current_chapter_title = title
-        elif line.startswith('#CHANGE:'):
-            # Save previous change
-            if current_change is not None:
-                current_change["original"] = '\n'.join(original_lines)
-                current_change["cleaned"] = '\n'.join(cleaned_lines)
-                changes.append(current_change)
-            
-            change_id = line.split(':')[1].strip()
-            current_change = {
-                "id": change_id,
-                "chapter": chapter_count,
-                "chapter_title": current_chapter_title,
-                "status": "pending",
-                "reason": "",
-                "original": "",
-                "cleaned": ""
-            }
-            in_original = False
-            in_cleaned = False
-            original_lines = []
-            cleaned_lines = []
-        elif current_change is not None:
-            if line.startswith('#STATUS:'):
-                current_change["status"] = line.split(':')[1].strip()
-            elif line.startswith('#REASON:'):
-                current_change["reason"] = line.split(':', 1)[1].strip()
-            elif line.strip() == '#ORIGINAL':
-                in_original = True
-                in_cleaned = False
-            elif line.strip() == '#CLEANED':
-                in_original = False
-                in_cleaned = True
-            elif line.strip() == '#END':
-                current_change["original"] = '\n'.join(original_lines)
-                current_change["cleaned"] = '\n'.join(cleaned_lines)
-                changes.append(current_change)
-                current_change = None
-                in_original = False
-                in_cleaned = False
-                original_lines = []
-                cleaned_lines = []
-            elif in_original:
-                original_lines.append(line)
-            elif in_cleaned:
-                cleaned_lines.append(line)
-    
-    # Handle last change if file doesn't end with #END
-    if current_change is not None:
-        current_change["original"] = '\n'.join(original_lines)
-        current_change["cleaned"] = '\n'.join(cleaned_lines)
-        changes.append(current_change)
-    
-    return changes
-
-
-@app.get("/api/logs/{session_id}")
-async def stream_logs(session_id: str, request: Request):
-    """
-    Stream logs for a session using Server-Sent Events (SSE).
-    """
-    # Load from disk if not in memory
-    if session_id not in sessions:
-        loaded = load_session_from_disk(session_id)
-        if loaded:
-            sessions[session_id] = loaded
-        else:
-            raise HTTPException(status_code=404, detail="Session not found")
-    
-    update_session_access(session_id)
+@app.get("/api/session/{session_id}/stream")
+async def stream_session(session_id: str):
+    """Stream session updates via Server-Sent Events"""
     
     async def event_generator():
+        """Generate SSE events for session updates"""
         last_log_count = 0
+        last_status = None
         
-        try:
-            while True:
-                # Check if client is still connected
-                if await request.is_disconnected():
-                    break
-                
-                session = sessions.get(session_id)
-                if not session:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'Session expired'})}\n\n"
-                    break
-                
-                # Send new logs
-                current_logs = session.get("logs", [])
-                if len(current_logs) > last_log_count:
-                    for log in current_logs[last_log_count:]:
-                        yield f"data: {json.dumps({'type': 'log', 'log': log})}\n\n"
-                    last_log_count = len(current_logs)
-                
-                # Send status update
-                yield f"data: {json.dumps({'type': 'status', 'status': session['status'], 'progress': session.get('progress', 0), 'phase': session.get('phase', '')})}\n\n"
-                
-                # Stop if processing is complete or errored
-                if session["status"] in ["review", "complete", "error"]:
-                    yield f"data: {json.dumps({'type': 'done', 'status': session['status']})}\n\n"
-                    break
-                
-                await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
-            # Client disconnected
-            pass
+        while True:
+            session = load_session(session_id)
+            if not session:
+                yield f"data: {json.dumps({'error': 'Session not found'})}\n\n"
+                break
+            
+            # Send status update if changed
+            current_status = {
+                'status': session.get('status'),
+                'phase': session.get('phase', ''),
+                'progress': session.get('progress', 0)
+            }
+            
+            if current_status != last_status:
+                yield f"data: {json.dumps({'type': 'status', **current_status})}\n\n"
+                last_status = current_status
+            
+            # Send new log messages
+            logs = session.get('logs', [])
+            if len(logs) > last_log_count:
+                for log in logs[last_log_count:]:
+                    yield f"data: {json.dumps({'type': 'log', 'message': log['message']})}\n\n"
+                last_log_count = len(logs)
+            
+            # Stop streaming if processing is complete
+            if session.get('status') in ['review', 'complete', 'error']:
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                break
+            
+            await asyncio.sleep(0.1)  # Poll every 100ms
     
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable proxy buffering
-        }
-    )
+    return SSEStreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/api/session/{session_id}")
-async def get_session(
-    session_id: str,
-    authenticated: bool = Depends(verify_credentials)
-):
-    """Get the current state of a session."""
-    # Try memory first, then disk
-    if session_id not in sessions:
-        loaded = load_session_from_disk(session_id)
-        if loaded:
-            sessions[session_id] = loaded
-        else:
-            raise HTTPException(status_code=404, detail="Session not found")
-    
-    update_session_access(session_id)
-    
-    session = sessions[session_id]
-    return {
-        "id": session["id"],
-        "filename": session["filename"],
-        "status": session["status"],
-        "progress": session.get("progress", 0),
-        "phase": session.get("phase", ""),
-        "changes": session.get("changes", []),
-        "logs": session.get("logs", [])
-    }
-
-
-@app.get("/api/session/{session_id}/download")
-async def download_bookwash(
-    session_id: str,
-    authenticated: bool = Depends(verify_credentials)
-):
-    """Download the `.bookwash` file for a given session, if present."""
-    # Try memory, then disk
-    session = sessions.get(session_id)
+async def get_session(session_id: str) -> SessionResponse:
+    """Get session status"""
+    session = load_session(session_id)
     if not session:
-        loaded = load_session_from_disk(session_id)
-        if loaded:
-            sessions[session_id] = loaded
-            session = loaded
-        else:
-            raise HTTPException(status_code=404, detail="Session not found")
-    
-    update_session_access(session_id)
-    bookwash_path = session.get("bookwash_path")
-    if not bookwash_path:
-        # If no path in memory, see if file exists in session dir by convention
-        session_dir = get_session_dir(session_id)
-        if session_dir.exists():
-            # Choose first .bookwash file found
-            matches = list(session_dir.glob("*.bookwash"))
-            if matches:
-                bookwash_path = str(matches[0])
-                session["bookwash_path"] = bookwash_path
-                save_session_to_disk(session_id)
-    
-    if not bookwash_path or not Path(bookwash_path).exists():
-        raise HTTPException(status_code=404, detail="No bookwash file available")
-    
-    path = Path(bookwash_path)
-    filename = path.name
-    return FileResponse(path, media_type="text/plain", filename=filename)
-
-
-@app.post("/api/session/{session_id}/change/{change_id}")
-async def update_change(
-    session_id: str,
-    change_id: str,
-    status: str = Form(...),
-    authenticated: bool = Depends(verify_credentials)
-):
-    """Accept or reject a specific change."""
-    if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    update_session_access(session_id)
+    print(f"GET /api/session/{session_id}: status={session.get('status')}, changes={len(session.get('changes', []))}, logs={len(session.get('logs', []))}")
+    return SessionResponse(**session)
+
+
+@app.post("/api/changes/{session_id}")
+async def handle_change(session_id: str, action: ChangeAction):
+    """Accept or reject a change"""
+    session = load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
     
-    if status not in ["accepted", "rejected"]:
-        raise HTTPException(status_code=400, detail="Status must be 'accepted' or 'rejected'")
-    
-    session = sessions[session_id]
-    
-    # Update change in session
-    for change in session.get("changes", []):
-        if change["id"] == change_id:
-            change["status"] = status
+    # Update change status
+    changes = session.get("changes", [])
+    for change in changes:
+        if change["id"] == action.change_id:
+            change["status"] = "accepted" if action.action == "accept" else "rejected"
+            if action.edited_text:
+                change["cleaned"] = action.edited_text
             break
     
-    # Update the actual bookwash file
-    if session.get("bookwash_path"):
-        update_bookwash_change_status(session["bookwash_path"], change_id, status)
+    session["changes"] = changes
+    save_session(session_id, session)
     
-    return {"status": "updated", "change_id": change_id, "new_status": status}
+    return {"message": "Change updated"}
 
 
-@app.post("/api/session/{session_id}/accept-all")
-async def accept_all_changes(
-    session_id: str,
-    authenticated: bool = Depends(verify_credentials)
-):
-    """Accept all pending changes at once."""
-    if session_id not in sessions:
+@app.post("/api/export/{session_id}")
+async def export_book(session_id: str):
+    """Export the cleaned book as EPUB"""
+    session = load_session(session_id)
+    if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    update_session_access(session_id)
+    bookwash_path = Path(session.get("bookwash_path", ""))
+    if not bookwash_path.exists():
+        raise HTTPException(status_code=404, detail="BookWash file not found")
     
-    session = sessions[session_id]
-    count = 0
+    # The bookwash file already has the changes embedded
+    # User decisions are tracked in session but for now we'll export as-is
+    # TODO: Update content_lines based on user accepted/rejected changes
     
-    for change in session.get("changes", []):
-        if change["status"] == "pending":
-            change["status"] = "accepted"
-            count += 1
-            if session.get("bookwash_path"):
-                update_bookwash_change_status(session["bookwash_path"], change["id"], "accepted")
-    
-    return {"status": "updated", "accepted_count": count}
-
-
-def update_bookwash_change_status(bookwash_path: str, change_id: str, new_status: str):
-    """Update a change's status in the bookwash file."""
-    with open(bookwash_path, 'r') as f:
-        content = f.read()
-    
-    lines = content.split('\n')
-    new_lines = []
-    found_change = False
-    
-    for i, line in enumerate(lines):
-        if line.startswith(f'#CHANGE: {change_id}'):
-            found_change = True
-        elif found_change and line.startswith('#STATUS:'):
-            line = f'#STATUS: {new_status}'
-            found_change = False
-        new_lines.append(line)
-    
-    with open(bookwash_path, 'w') as f:
-        f.write('\n'.join(new_lines))
-
-
-@app.post("/api/session/{session_id}/export")
-async def export_epub(
-    session_id: str,
-    authenticated: bool = Depends(verify_credentials)
-):
-    """Export the processed EPUB with accepted changes."""
-    if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    update_session_access(session_id)
-    
-    session = sessions[session_id]
-    
-    if not session.get("bookwash_path"):
-        raise HTTPException(status_code=400, detail="No processed bookwash file")
-    
-    bookwash_path = Path(session["bookwash_path"])
-    epub_path = Path(session["epub_path"])
-    output_path = bookwash_path.parent / f"{epub_path.stem}_cleaned.epub"
-    
-    # Run bookwash_to_epub
+    # Generate cleaned EPUB using subprocess
+    output_path = bookwash_path.parent / f"{bookwash_path.stem}_cleaned.epub"
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "bookwash_to_epub.py"),
-         str(bookwash_path), "-o", str(output_path)],
-        capture_output=True, text=True, timeout=120
+        [sys.executable, str(SCRIPT_DIR / "bookwash_to_epub.py"), str(bookwash_path), str(output_path)],
+        capture_output=True,
+        text=True
     )
-    
     if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=f"Export failed: {result.stderr}")
+        raise HTTPException(status_code=500, detail=f"EPUB export failed: {result.stderr}")
+    # User decisions are tracked in session but for now we'll export as-is
+    # TODO: Update content_lines based on user accepted/rejected changes
     
-    # Read the file
-    with open(output_path, 'rb') as f:
-        epub_content = f.read()
+    # Generate cleaned EPUB
+    output_path = bookwash_path.parent / f"{bookwash_path.stem}_cleaned.epub"
+    convert_bookwash_to_epub(str(bookwash_path), str(output_path))
     
-    session["status"] = "complete"
-    
-    return Response(
-        content=epub_content,
+    return FileResponse(
+        output_path,
         media_type="application/epub+zip",
-        headers={"Content-Disposition": f"attachment; filename={epub_path.stem}_cleaned.epub"}
+        filename=output_path.name
+    )
+    
+    return FileResponse(
+        output_path,
+        media_type="application/epub+zip",
+        filename=output_path.name
     )
 
 
-@app.delete("/api/session/{session_id}")
-async def delete_session(
-    session_id: str,
-    authenticated: bool = Depends(verify_credentials)
-):
-    """Clean up a session and its files. Cancel any running processing."""
-    if session_id in sessions:
-        session = sessions[session_id]
-        
-        # Kill background processing if running
-        if session.get("process_pid"):
-            try:
-                import signal
-                os.kill(session["process_pid"], signal.SIGTERM)
-                print(f"Killed process {session['process_pid']} for session {session_id}")
-            except ProcessLookupError:
-                pass  # Process already finished
-            except Exception as e:
-                print(f"Error killing process: {e}")
-        
-        # Clean up files
-        if session.get("epub_path"):
-            session_dir = Path(session["epub_path"]).parent
-            if session_dir.exists() and session_dir.parent == SESSIONS_DIR:
-                shutil.rmtree(session_dir, ignore_errors=True)
-        
-        del sessions[session_id]
-    
-    return {"status": "deleted"}
-
-
-# Legacy endpoint for simple one-shot processing (no live logs)
-@app.post("/api/process")
-async def process_epub_simple(
-    file: UploadFile = File(...),
-    target_language: int = Form(2),
-    target_adult: int = Form(2),
-    target_violence: int = Form(3),
-    model: str = Form("gemini-2.0-flash"),
-    authenticated: bool = Depends(verify_credentials)
-):
-    """
-    Simple one-shot processing (legacy endpoint).
-    For live logs and review UI, use /api/upload + /api/process/{session_id}.
-    """
-    if not file.filename.endswith('.epub'):
-        raise HTTPException(status_code=400, detail="File must be an EPUB")
-    
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        
-        epub_path = temp_path / file.filename
-        with open(epub_path, 'wb') as f:
-            content = await file.read()
-            f.write(content)
-        
-        bookwash_path = temp_path / f"{epub_path.stem}.bookwash"
-        
-        # Convert
-        result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "epub_to_bookwash.py"),
-             str(epub_path), str(bookwash_path)],
-            capture_output=True, text=True, timeout=60
-        )
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Conversion failed: {result.stderr}")
-        
-        # Process
-        env = os.environ.copy()
-        env["GEMINI_API_KEY"] = api_key
-        result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "bookwash_llm.py"),
-             "--rate", "--clean",
-             "--language", str(target_language),
-             "--sexual", str(target_adult),
-             "--violence", str(target_violence),
-             "--model", model,
-             str(bookwash_path)],
-            capture_output=True, text=True, timeout=600, env=env
-        )
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Processing failed: {result.stderr}")
-        
-        # Export
-        output_path = temp_path / f"{epub_path.stem}_cleaned.epub"
-        result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "bookwash_to_epub.py"),
-             str(bookwash_path), "-o", str(output_path)],
-            capture_output=True, text=True, timeout=60
-        )
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Export failed: {result.stderr}")
-        
-        with open(output_path, 'rb') as f:
-            epub_content = f.read()
-        
-        return Response(
-            content=epub_content,
-            media_type="application/epub+zip",
-            headers={"Content-Disposition": f"attachment; filename={epub_path.stem}_cleaned.epub"}
-        )
-
-
-# Serve Flutter web files (main.dart.js, manifest.json, etc.)
-# IMPORTANT: This must be the LAST route to avoid catching API routes
-@app.get("/{filename:path}")
-async def serve_flutter_file(filename: str, authenticated: bool = Depends(verify_credentials)):
-    """Serve Flutter web build files."""
-    # API routes are handled by specific endpoints above
-    if filename.startswith("api/"):
-        raise HTTPException(status_code=404, detail="Not found")
-    
-    file_path = FLUTTER_WEB_BUILD / filename
-    if file_path.exists() and file_path.is_file():
-        # Determine content type
-        content_type = "application/octet-stream"
-        if filename.endswith(".js"):
-            content_type = "application/javascript"
-        elif filename.endswith(".json"):
-            content_type = "application/json"
-        elif filename.endswith(".png"):
-            content_type = "image/png"
-        elif filename.endswith(".ico"):
-            content_type = "image/x-icon"
-        elif filename.endswith(".woff2"):
-            content_type = "font/woff2"
-        elif filename.endswith(".woff"):
-            content_type = "font/woff"
-        
-        return Response(content=file_path.read_bytes(), media_type=content_type)
-    
-    # For SPA routing, return index.html for non-file routes
-    flutter_index = FLUTTER_WEB_BUILD / "index.html"
-    if flutter_index.exists():
-        return HTMLResponse(content=flutter_index.read_text())
-    
-    raise HTTPException(status_code=404, detail="Not found")
+# Mount static files (Flutter web build)
+if Path("build/web").exists():
+    app.mount("/", StaticFiles(directory="build/web", html=True), name="static")
 
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

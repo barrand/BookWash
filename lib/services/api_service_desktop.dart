@@ -98,6 +98,7 @@ class DesktopApiService implements ApiService {
   @override
   Future<void> startProcessing({
     required String sessionId,
+    required List<String> languageWords,
     required int targetAdult,
     required int targetViolence,
     required String model,
@@ -108,6 +109,7 @@ class DesktopApiService implements ApiService {
     }
 
     session.status = 'processing';
+    session.languageWords = languageWords;
     // UI uses 1-4 where 4="Unfiltered", Python uses 1-5 where 5=X (max)
     // Map UI level 4 to Python level 5 so "Unfiltered" means nothing gets flagged
     session.targetAdult = targetAdult == 4 ? 5 : targetAdult;
