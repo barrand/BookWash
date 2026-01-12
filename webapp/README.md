@@ -1,75 +1,45 @@
-# BookWash Web App
+# BookWash Web Backend
 
-A web interface for BookWash - AI-powered content moderation for EPUB books.
+FastAPI backend for the BookWash web application.
 
 ## Local Development
 
 1. Install dependencies:
 ```bash
-pip install -r webapp/requirements.txt
+pip install -r requirements.txt
 ```
 
-2. Set environment variables:
+2. Set environment variable:
 ```bash
-export GEMINI_API_KEY="your-api-key-here"
-export APP_PASSWORD="your-password"  # Optional: for basic auth
+export GEMINI_API_KEY="your-api-key"
 ```
 
 3. Run the server:
 ```bash
-cd webapp
-uvicorn app:app --reload
+cd ..
+uvicorn webapp.app:app --reload --port 8000
 ```
 
-4. Open http://localhost:8000
+4. Build Flutter web (from project root):
+```bash
+flutter build web --target lib/main_web.dart --release
+```
 
-## Deploy to Render
+The server will serve the Flutter web app at http://localhost:8000
 
-### Option 1: Via Render Dashboard
+## Deployment (Render.com)
 
-1. Go to [render.com](https://render.com) and create an account
-2. Click "New +" → "Web Service"
-3. Connect your GitHub repository
-4. Configure:
-   - **Name**: bookwash
-   - **Root Directory**: (leave empty)
-   - **Runtime**: Python 3
-   - **Build Command**: `pip install -r webapp/requirements.txt`
-   - **Start Command**: `cd webapp && uvicorn app:app --host 0.0.0.0 --port $PORT`
+The app is configured for automatic deployment via `render.yaml` when you push to your main branch.
 
-5. Add Environment Variables:
-   - `GEMINI_API_KEY`: Your Google Gemini API key
-   - `APP_PASSWORD`: Password for basic auth (optional)
-   - `APP_USERNAME`: Username for basic auth (default: "bookwash")
-
-6. Click "Create Web Service"
-
-### Option 2: Via render.yaml (Blueprint)
-
-The repo includes a `render.yaml` file. Just:
-1. Push to GitHub
-2. Go to Render Dashboard → Blueprints → New Blueprint Instance
-3. Connect your repo
-4. Add the environment variables when prompted
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GEMINI_API_KEY` | Yes | Your Google Gemini API key |
-| `APP_PASSWORD` | No | Password for basic auth (if not set, no auth required) |
-| `APP_USERNAME` | No | Username for basic auth (default: "bookwash") |
+Required environment variables on Render:
+- `GEMINI_API_KEY` - Your Gemini API key
+- `APP_PASSWORD` - Optional password protection
 
 ## API Endpoints
 
-- `GET /` - Web interface
-- `GET /api/health` - Health check
-- `GET /api/rating-levels` - Get available rating levels
-- `POST /api/rate-only` - Rate an EPUB without cleaning
-- `POST /api/process` - Full pipeline: rate, clean, and return cleaned EPUB
-
-## Security
-
-- Your Gemini API key is stored on the server and never exposed to users
-- Basic auth protects the app from unauthorized access
-- Files are processed in temporary directories and deleted after processing
+- `POST /api/upload` - Upload EPUB file
+- `POST /api/process/{session_id}` - Start processing
+- `GET /api/session/{session_id}` - Get session status
+- `GET /api/logs/{session_id}` - Get processing logs
+- `POST /api/changes/{session_id}` - Accept/reject changes
+- `POST /api/export/{session_id}` - Export cleaned EPUB
