@@ -71,8 +71,12 @@ At the time of this writing, you can try BookWash for free here: https://bookwas
     *   **Important:** Keep this key safe and private!
 
 3.  **Run the App:**
-    *   When you first launch the BookWash application, it will prompt you to enter your Gemini API key. Paste the key you just copied. The app will save it securely for future sessions.
-    *   Run the app from your terminal using the command for your operating system:
+
+    **Desktop Application (macOS, Windows, Linux):**
+    
+    When you first launch the BookWash application, it will prompt you to enter your Gemini API key. Paste the key you just copied. The app will save it securely for future sessions.
+    
+    Run the app from your terminal using the command for your operating system:
 
     **On Windows:**
     ```bash
@@ -87,6 +91,39 @@ At the time of this writing, you can try BookWash for free here: https://bookwas
     **On Linux:**
     ```bash
     flutter run -d linux
+    ```
+
+    **Web Application:**
+    
+    BookWash also has a web version that runs with a Python backend. To run it locally:
+    
+    1. **Set your Gemini API Key as an environment variable:**
+       ```bash
+       export GEMINI_API_KEY="your-api-key-here"
+       ```
+    
+    2. **Build the Flutter web frontend and start the backend server:**
+       ```bash
+       ./rebuild.sh
+       ```
+       
+       Or manually:
+       ```bash
+       # Build Flutter web app
+       flutter build web --target lib/main_web.dart
+       
+       # Start Python backend (requires uvicorn and FastAPI)
+       python3 -m uvicorn webapp.app:app --reload --port 8000
+       ```
+    
+    3. **Open your browser to:**
+       ```
+       http://localhost:8000
+       ```
+    
+    **Note:** The web version requires Python 3.9+ and the following packages:
+    ```bash
+    pip install fastapi uvicorn google-generativeai ebooklib beautifulsoup4 lxml
     ```
 
 ### EPUB Clipper (Testing Helper)

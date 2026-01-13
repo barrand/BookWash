@@ -76,6 +76,7 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
   int sexualContentLevel = 2; // Default: PG
   int violenceLevel = 4; // Default: Unfiltered
   String selectedModel = 'gemini-2.5-flash-lite';
+  bool enablePrefilter = true; // Default: enabled
 
   // Logs
   final List<String> logs = [];
@@ -351,6 +352,7 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
         targetAdult: sexualContentLevel,
         targetViolence: violenceLevel,
         model: selectedModel,
+        enablePrefilter: enablePrefilter,
       );
 
       // Subscribe to SSE stream for real-time updates
@@ -416,6 +418,7 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
               targetAdult: sexualContentLevel,
               targetViolence: violenceLevel,
               model: selectedModel,
+              enablePrefilter: enablePrefilter,
             );
 
             // Stream logs (subscription)
@@ -830,6 +833,7 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
                   isProcessing: isProcessing,
                   sexualContentLevel: sexualContentLevel,
                   violenceLevel: violenceLevel,
+                  enablePrefilter: enablePrefilter,
                   onWordChanged: (word, value) {
                     setState(() => languageWordSelection[word] = value);
                   },
@@ -838,6 +842,8 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
                       setState(() => sexualContentLevel = v),
                   onViolenceLevelChanged: (v) =>
                       setState(() => violenceLevel = v),
+                  onPrefilterChanged: (v) =>
+                      setState(() => enablePrefilter = v),
                 ),
 
                 const SizedBox(height: 16),

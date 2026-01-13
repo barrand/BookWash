@@ -91,6 +91,7 @@ class WebApiService implements ApiService {
     required int targetAdult,
     required int targetViolence,
     required String model,
+    required bool enablePrefilter,
   }) async {
     final uri = Uri.parse('$_baseUrl/api/process/$sessionId');
 
@@ -107,6 +108,7 @@ class WebApiService implements ApiService {
         'adult_level': pythonAdult,
         'violence_level': pythonViolence,
         'model': model,
+        'enable_prefilter': enablePrefilter,
       }),
     );
 

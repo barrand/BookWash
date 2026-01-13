@@ -102,6 +102,7 @@ class DesktopApiService implements ApiService {
     required int targetAdult,
     required int targetViolence,
     required String model,
+    required bool enablePrefilter,
   }) async {
     final session = _sessions[sessionId];
     if (session == null) {
@@ -109,18 +110,21 @@ class DesktopApiService implements ApiService {
     }
 
     session.status = 'processing';
-    session.languageWords = languageWords;
     // UI uses 1-4 where 4="Unfiltered", Python uses 1-5 where 5=X (max)
     // Map UI level 4 to Python level 5 so "Unfiltered" means nothing gets flagged
     session.targetAdult = targetAdult == 4 ? 5 : targetAdult;
     session.targetViolence = targetViolence == 4 ? 5 : targetViolence;
     session.model = model;
+    session.enablePrefilter = enablePrefilter;
 
     // Start processing in background
-    _processInBackground(session);
+    _processInBackground(session, languageWords);
   }
 
-  Future<void> _processInBackground(_LocalSession session) async {
+  Future<void> _processInBackground(
+    _LocalSession session,
+    List<String> languageWords,
+  ) async {
     try {
       session.addLog('📚 Starting BookWash processing...');
       session.addLog('📖 Input: ${path.basename(session.epubPath)}');
@@ -164,21 +168,37 @@ class DesktopApiService implements ApiService {
       session.phase = 'rating';
       session.progress = 10;
 
+      final args = [
+        '-u',
+        path.join(scriptsDir, 'bookwash_llm.py'),
+        '--rate',
+        '--clean-passes',
+        '--sexual',
+        session.targetAdult.toString(),
+        '--violence',
+        session.targetViolence.toString(),
+        '--model',
+        session.model,
+      ];
+
+      // Add language words if specified
+      if (languageWords.isNotEmpty) {
+        args.addAll(['--language-words', jsonEncode(languageWords)]);
+        args.addAll(['--filter-types', 'language,sexual,violence']);
+      } else {
+        args.addAll(['--filter-types', 'sexual,violence']);
+      }
+
+      // Add --no-prefilter flag if disabled
+      if (!session.enablePrefilter) {
+        args.add('--no-prefilter');
+      }
+
+      args.add(bookwashPath);
+
       final process = await Process.start(
         'python3',
-        [
-          '-u',
-          path.join(scriptsDir, 'bookwash_llm.py'),
-          '--rate',
-          '--clean-passes',
-          '--sexual',
-          session.targetAdult.toString(),
-          '--violence',
-          session.targetViolence.toString(),
-          '--model',
-          session.model,
-          bookwashPath,
-        ],
+        args,
         environment: {'GEMINI_API_KEY': _apiKey, 'PYTHONUNBUFFERED': '1'},
       );
 
@@ -460,6 +480,7 @@ class _LocalSession {
   int targetAdult = 2;
   int targetViolence = 3;
   String model = 'gemini-2.0-flash';
+  bool enablePrefilter = true;
   List<LogMessage> logs = [];
   List<ChangeItem> changes = [];
 

@@ -129,10 +129,12 @@ class SensitivitySettingsCard extends StatelessWidget {
   final bool isProcessing;
   final int sexualContentLevel;
   final int violenceLevel;
+  final bool enablePrefilter;
   final void Function(String, bool) onWordChanged;
   final VoidCallback onSaveWords;
   final void Function(int) onSexualLevelChanged;
   final void Function(int) onViolenceLevelChanged;
+  final void Function(bool) onPrefilterChanged;
 
   const SensitivitySettingsCard({
     super.key,
@@ -140,10 +142,12 @@ class SensitivitySettingsCard extends StatelessWidget {
     required this.isProcessing,
     required this.sexualContentLevel,
     required this.violenceLevel,
+    required this.enablePrefilter,
     required this.onWordChanged,
     required this.onSaveWords,
     required this.onSexualLevelChanged,
     required this.onViolenceLevelChanged,
+    required this.onPrefilterChanged,
   });
 
   @override
@@ -158,6 +162,19 @@ class SensitivitySettingsCard extends StatelessWidget {
             const Text(
               'Step 2: Set Sensitivity Levels',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            CheckboxListTile(
+              title: const Text('Apply automatic language prefilter'),
+              subtitle: const Text(
+                "Auto-replaces unambiguous profanity ('sh*t'→'crud', '*sshole'→'jerk'). Context-dependent words ('*ss', 'd*mn') are handled by AI based on your selections below.",
+                style: TextStyle(fontSize: 12),
+              ),
+              value: enablePrefilter,
+              onChanged: isProcessing
+                  ? null
+                  : (value) => onPrefilterChanged(value ?? true),
+              controlAffinity: ListTileControlAffinity.leading,
             ),
             const SizedBox(height: 16),
             LanguageWordFilter(
