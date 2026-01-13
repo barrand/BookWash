@@ -54,6 +54,7 @@ class ProcessRequest(BaseModel):
     adult_level: int = 2
     violence_level: int = 3
     model: str = "gemini-2.0-flash"
+    enable_prefilter: bool = True
 
 
 class ChangeAction(BaseModel):
@@ -184,6 +185,9 @@ async def process_book(session_id: str, epub_path: Path, request: ProcessRequest
             '--sexual', str(request.adult_level),
             '--violence', str(request.violence_level),
         ]
+        
+        if not request.enable_prefilter:
+            cmd.append('--no-prefilter')
         
         # Run subprocess and stream output
         process = await asyncio.create_subprocess_exec(

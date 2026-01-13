@@ -117,6 +117,7 @@ abstract class ApiService {
     required int targetAdult,
     required int targetViolence,
     required String model,
+    required bool enablePrefilter,
   });
 
   /// Stream of log messages for a session
