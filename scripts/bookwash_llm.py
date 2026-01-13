@@ -357,7 +357,7 @@ class BookWashFile:
 
 # --- Parser ---
 
-def parse_bookwash(filepath: Path) -> BookWashFile:
+def parse_bookwash(filepath: Path, enable_prefilter: bool = True) -> BookWashFile:
     """Parse a .bookwash file."""
     content = filepath.read_text(encoding='utf-8')
     lines = content.split('\n')
@@ -487,22 +487,26 @@ def parse_bookwash(filepath: Path) -> BookWashFile:
     
     # Apply language prefilter to all chapters - regex replacement for unambiguous profanity
     # This runs ONCE at load time, before any LLM processing
-    total_replacements = 0
-    for chapter in bw.chapters:
-        new_lines = []
-        for line in chapter.content_lines:
-            # Only prefilter content lines, not metadata/markup lines
-            if line.startswith('#'):
-                new_lines.append(line)
-            else:
-                filtered = prefilter_language(line)
-                if filtered != line:
-                    total_replacements += 1
-                new_lines.append(filtered)
-        chapter.content_lines = new_lines
-    
-    if total_replacements > 0:
-        print(f"✅ Prefilter: {total_replacements} auto-replacements (sh*t→crud, f*ck→screw, etc.)", file=sys.stderr)
+    # Can be disabled with --no-prefilter flag (enable_prefilter=False)
+    if enable_prefilter:
+        total_replacements = 0
+        for chapter in bw.chapters:
+            new_lines = []
+            for line in chapter.content_lines:
+                # Only prefilter content lines, not metadata/markup lines
+                if line.startswith('#'):
+                    new_lines.append(line)
+                else:
+                    filtered = prefilter_language(line)
+                    if filtered != line:
+                        total_replacements += 1
+                    new_lines.append(filtered)
+            chapter.content_lines = new_lines
+        
+        if total_replacements > 0:
+            print(f"✅ Prefilter: {total_replacements} auto-replacements (sh*t→crud, f*ck→screw, etc.)", file=sys.stderr)
+    else:
+        print(f"⚠️  Prefilter: SKIPPED (--no-prefilter flag)", file=sys.stderr)
     
     return bw
 
@@ -3169,6 +3173,8 @@ Examples:
                        help='Target violence level (default: 5/Unrated)')
     parser.add_argument('--filter-types', type=str, default='language,sexual,violence',
                        help='Comma-separated list of content types to filter (e.g., "language" for language-only)')
+    parser.add_argument('--no-prefilter', action='store_true', 
+                       help='Skip automatic language prefilter (regex-based profanity removal)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     parser.add_argument('--dry-run', action='store_true', help='Parse and validate without API calls')
     
@@ -3192,7 +3198,8 @@ Examples:
     
     # Parse bookwash file
     print(f"Loading: {input_path.name}")
-    bw = parse_bookwash(input_path)
+    enable_prefilter = not args.no_prefilter
+    bw = parse_bookwash(input_path, enable_prefilter=enable_prefilter)
     print(f"  Source: {bw.source}")
     print(f"  Chapters: {len(bw.chapters)}")
     print()

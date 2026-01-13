@@ -85,6 +85,7 @@ class _BookWashHomeState extends State<BookWashHome> {
   };
   int sexualContentLevel = 2; // Default: PG sexual content
   int violenceLevel = 4; // Default: Unfiltered (no censorship)
+  bool enablePrefilter = true; // Default: enabled
   bool isProcessing = false;
   bool isCancelling = false;
   double progress = 0.0;
@@ -530,7 +531,7 @@ class _BookWashHomeState extends State<BookWashHome> {
         'Target levels: Language: Filtering ${selectedWords.length} words, Adult=${_levelToRating(sexualContentLevel)}, Violence=${_levelToRating(violenceLevel)}',
       );
 
-      final llmResult = await _runPythonScript('scripts/bookwash_llm.py', [
+      final llmArgs = [
         '--rate',
         '--clean-passes',
         bookwashPath,
@@ -546,7 +547,17 @@ class _BookWashHomeState extends State<BookWashHome> {
         sexualContentLevel.toString(),
         '--violence',
         violenceLevel.toString(),
-      ]);
+      ];
+
+      // Add --no-prefilter flag if disabled
+      if (!enablePrefilter) {
+        llmArgs.add('--no-prefilter');
+      }
+
+      final llmResult = await _runPythonScript(
+        'scripts/bookwash_llm.py',
+        llmArgs,
+      );
 
       if (llmResult != 0) {
         throw Exception('Failed to process with LLM (exit code: $llmResult)');
@@ -1113,6 +1124,7 @@ class _BookWashHomeState extends State<BookWashHome> {
               isProcessing: isProcessing,
               sexualContentLevel: sexualContentLevel,
               violenceLevel: violenceLevel,
+              enablePrefilter: enablePrefilter,
               onWordChanged: (word, value) {
                 setState(() {
                   languageWordSelection[word] = value;
@@ -1126,6 +1138,9 @@ class _BookWashHomeState extends State<BookWashHome> {
               onViolenceLevelChanged: (v) {
                 setState(() => violenceLevel = v);
                 _saveLevel('violence_level', v);
+              },
+              onPrefilterChanged: (v) {
+                setState(() => enablePrefilter = v);
               },
             ),
             const SizedBox(height: 20),
