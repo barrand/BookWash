@@ -41,7 +41,10 @@ BookWash reads an EPUB file, breaks it down into its constituent chapters, and t
     The prompt is dynamically generated based on exactly which content types you're filtering, prioritizing content safety over narrative preservation at stricter levels.
 4.  **EPUB Re-creation**: Once all chapters are processed, a new EPUB file is assembled with the cleaned content.
 
+
+
 ## Getting Started
+At the time of this writing, you can try BookWash for free here: https://bookwash.onrender.com/ I don't know how long I'll keep that free location up since it cost me money for AI fees and hosting. Alternatively you can follow the instructions below to run it on your own:
 
 ### Prerequisites
 
