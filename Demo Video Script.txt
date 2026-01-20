@@ -1,0 +1,13 @@
+Enter BookWash - the AI-powered epub cleaner that scrubs the offensive stuff while keeping the story intact.
+
+Here's the magic:
+
+Upload your epub, pick which words get the boot, set your comfort level for adult content and violence, then hit process and watch it work.
+
+Behind the scenes? BookWash runs a multi-pass LLM system that's honestly pretty smart. It rates each chapter, chunks up the problem areas, then hits them with separate passes for language, adult content, and violence. Still not clean enough? It goes again with MORE aggressive prompts until it's squeaky clean.
+
+Then YOU take control - review every change, tweak whatever you want, and BOOM! Export your cleaned epub.
+
+The secret sauce? The BookWash file format lets you see every single edit. Full transparency, no black box.
+
+I had a blast building this. Wanna try it? Check out github.com/barrand/BookWash
