@@ -280,7 +280,7 @@ async def process_book(session_id: str, epub_path: Path, request: ProcessRequest
                             "original": '\n'.join(change_original),
                             "cleaned": '\n'.join(change_cleaned),
                             "reason": change_reason,
-                            "status": "pending"
+                            "status": change_status
                         })
                     in_change = False
                 elif in_change:

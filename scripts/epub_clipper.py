@@ -3,7 +3,7 @@
 
 Create a clipped version of an existing EPUB containing only a subset of chapters:
 - First chapter
-- One middle chapter
+- Five middle chapters (evenly spaced)
 - Last chapter
 
 It keeps:
@@ -13,7 +13,7 @@ It keeps:
 - content.opf spine and manifest updated
 
 Usage:
-  python scripts/epub_clipper.py input.epub output.epub [--count 3] [--append-title] [--verbose]
+  python scripts/epub_clipper.py input.epub output.epub [--count 7] [--append-title] [--verbose]
 
 Limitations:
 - Only supports EPUB 2 (OPF + NCX) layout.
@@ -170,17 +170,21 @@ def choose_content_indices(zipf: zipfile.ZipFile, opf: OpfData, spine_ids: list[
     # Ensure first and last eligible
     first_idx = eligible[0]
     last_idx = eligible[-1]
-    # Middle eligible
-    mid_idx = eligible[len(eligible)//2]
-    chosen = sorted(set([first_idx, mid_idx, last_idx]))
-    # If user requested more than 3, add additional spaced eligibles
-    if len(chosen) < count:
-        step = len(eligible) / (count - 1)
-        for k in range(count):
-            candidate = eligible[min(int(round(k * step)), len(eligible)-1)]
-            chosen.append(candidate)
-            if len(set(chosen)) == count:
-                break
+    
+    # Select 5 middle chapters evenly spaced from the eligible chapters
+    # (excluding the first and last which are already selected)
+    middle_eligibles = eligible[1:-1]  # All eligible except first and last
+    
+    if len(middle_eligibles) <= (count - 2):  # If we don't have enough middle chapters
+        chosen = [first_idx] + middle_eligibles + [last_idx]
+    else:
+        # Calculate 5 evenly spaced indices in the middle section
+        num_middle = min(count - 2, 5)  # Default to 5 middle chapters, or count-2 if less
+        step = len(middle_eligibles) / (num_middle + 1)  # +1 for even spacing
+        middle_indices = [middle_eligibles[min(int(round((i + 1) * step)), len(middle_eligibles) - 1)] 
+                         for i in range(num_middle)]
+        chosen = [first_idx] + middle_indices + [last_idx]
+    
     return sorted(set(chosen))
 
 def _structural_indices(total: int, count: int) -> list[int]:
@@ -304,7 +308,7 @@ def main():
     parser = argparse.ArgumentParser(description='Clip an EPUB to a subset of chapters.')
     parser.add_argument('input', help='Path to source EPUB')
     parser.add_argument('output', help='Path to clipped EPUB to create')
-    parser.add_argument('--count', type=int, default=3, help='Number of chapters to keep (default: 3)')
+    parser.add_argument('--count', type=int, default=7, help='Number of chapters to keep (default: 7 - first, 5 middle, last)')
     parser.add_argument('--append-title', action='store_true', help='Append " (Clipped)" to title')
     parser.add_argument('--min-words', type=int, default=1000, help='Minimum word count for a chapter to be considered (default: 1000)')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')

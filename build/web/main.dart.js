@@ -42003,7 +42003,7 @@ case 6:case 1:return A.T(q,r)
 case 2:return A.S(o.at(-1),r)}})
 return A.U($async$wT,r)},
 L(a){var s,r,q,p,o,n,m,l=this,k=null,j=t.p,i=A.c([],j)
-i.push(new A.ck(B.cS,new A.I6(A.cz("01/12/26 10:33pm MT",k,k,k,B.Um,k,k),B.Lq.JJ(0.2),k),k))
+i.push(new A.ck(B.cS,new A.I6(A.cz("01/19/26 04:19pm MT",k,k,k,B.Um,k,k),B.Lq.JJ(0.2),k),k))
 i.push(A.afF(B.H0,B.VJ,new A.aj2(l,a),k))
 s=A.cz("BookWash uses AI to automatically clean up offensive or inappropriate content from EPUB ebooks.",k,k,k,A.M(a).ok.w,k,k)
 r=A.cz("Please use BookWash with ethically sourced ebooks that you have the rights to modify. Avoid processing copyrighted material without permission.",k,k,k,A.M(a).ok.z,k,k)
@@ -42032,7 +42032,7 @@ if(l.w||l.ch.length!==0){s=A.c([],j)
 if(l.w){r=l.z
 q=l.dx
 p=l.y
-B.b.U(s,A.c([A.cz("Phase: "+r+" | SubPhase: "+q+" | Progress: "+B.d.fp(p*100)+"%",k,k,k,B.Un,k,k),B.bF,A.eJ(A.c([A.rR(new A.If(p,r,q,0,0,k),1),B.lq,A.afF(B.GS,B.zV,l.ga4c(),A.Oa(k,k,k,k,k,k,k,k,k,B.eZ,k,k,k,k,k,k,k,k,k,k))],j),B.a1,B.F,B.Q,0,k),B.be],j))}s.push(A.eJ(A.c([B.VT,A.eJ(A.c([B.VX,new A.O1(l.cx,new A.aji(l),k)],j),B.a1,B.F,B.Q,0,k)],j),B.a1,B.eY,B.Q,0,k))
+B.b.U(s,A.c([A.cz("Phase: "+r+" | SubPhase: "+q+" | Progress: "+B.d.fp(p*100)+"%",k,k,k,B.Un,k,k),B.bF,A.eJ(A.c([A.rR(new A.If(p,r,q,0,0,k),1),B.lq,A.afF(B.GS,B.zV,l.ga4c(),A.Oa(k,k,k,k,k,k,k,k,k,B.eZ,k,k,k,k,k,k,k,k,k,k))],j),B.a1,B.F,B.Q,0,k),B.be],j))}s.push(A.eJ(A.c([B.VU,A.eJ(A.c([B.VY,new A.O1(l.cx,new A.aji(l),k)],j),B.a1,B.F,B.Q,0,k)],j),B.a1,B.eY,B.Q,0,k))
 s.push(B.bF)
 r=A.eQ(8)
 q=l.ch.length
@@ -42239,7 +42239,7 @@ $0(){this.a.w=!1},
 $S:0}
 A.aiC.prototype={
 $1(a){var s=null,r=this.a,q=this.b,p=t.p,o=A.e4(A.c([A.avI(r,B.H4,1,!1,s),A.avI(q,B.H5,1,!0,s)],p),B.a1,B.F,B.cc)
-return A.axT(A.c([A.afE(!1,B.zV,s,s,s,s,s,s,new A.aiA(a),s,s),A.ayY(!1,B.VR,s,s,s,s,s,s,new A.aiB(a,r,q),s,s)],p),o,B.VW)},
+return A.axT(A.c([A.afE(!1,B.zV,s,s,s,s,s,s,new A.aiA(a),s,s),A.ayY(!1,B.VS,s,s,s,s,s,s,new A.aiB(a,r,q),s,s)],p),o,B.VX)},
 $S:119}
 A.aiA.prototype={
 $0(){return A.pr(this.a,!1).vr(null)},
@@ -42249,7 +42249,7 @@ $0(){return A.pr(this.a,!1).vr(new A.a8(this.b.a.a,this.c.a.a))},
 $S:0}
 A.aia.prototype={
 $1(a){var s=null
-return A.axT(A.c([A.afE(!1,B.VP,s,s,s,s,s,s,new A.ai8(a),s,s),A.ayY(!1,B.VU,s,s,s,s,s,s,new A.ai9(a),s,A.rO(s,s,B.eZ,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s))],t.p),B.VM,B.VV)},
+return A.axT(A.c([A.afE(!1,B.VQ,s,s,s,s,s,s,new A.ai8(a),s,s),A.ayY(!1,B.VV,s,s,s,s,s,s,new A.ai9(a),s,A.rO(s,s,B.eZ,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s))],t.p),B.VN,B.VW)},
 $S:119}
 A.ai8.prototype={
 $0(){return A.pr(this.a,!1).vr(!1)},
@@ -42622,7 +42622,7 @@ if(i!==0&&p.r<i){s=p.r
 n=n[s]
 r=A.ma(B.GR,B.VF,s>0?p.x:o,o)
 q=A.fX(A.cz(""+(s+1)+" / "+i,o,o,o,B.dc,B.fk,o),o,70)
-r=A.fX(A.eJ(A.c([r,B.bE,q,B.bE,A.ma(B.GX,B.VO,s<i-1?p.y:o,o)],k),B.a1,B.F,B.Q,0,o),o,320)
+r=A.fX(A.eJ(A.c([r,B.bE,q,B.bE,A.ma(B.GX,B.VP,s<i-1?p.y:o,o)],k),B.a1,B.F,B.Q,0,o),o,320)
 i=m>0&&!p.w?p.z:o
 i=A.ma(B.VC,B.VA,i,A.rO(o,o,B.n_,o,o,o,o,o,o,B.j,o,o,B.h9,o,o,o,o,o,o,o))
 l=l>0?p.Q:o
@@ -42659,7 +42659,7 @@ r=A.eQ(6)
 q=p.a.d
 return A.hf(A.e4(A.c([l,new A.ck(B.h8,A.eJ(A.c([A.rR(A.e4(A.c([k,B.bF,A.hf(A.e4(A.c([B.VK,B.bF,A.hf(A.avy(p.LT(q.d,q.e,!0),o),B.A,B.ma,o,o,o,o,o)],j),B.ax,B.F,B.Q),B.A,o,new A.dp(B.n5,o,s,r,o,o,B.aF),o,o,B.h8,o)],j),B.ct,B.F,B.Q),1),B.lq,A.rR(p.a3S(),1)],j),B.ax,B.F,B.Q,0,o),o)],j),B.ax,B.F,B.Q),B.A,o,new A.dp(o,o,n,m,o,o,B.aF),o,o,o,o)},
 a3S(){var s,r,q=this,p=null,o=A.fX(A.ma(B.o9,B.VD,new A.ak5(q),A.rO(p,p,B.mC,p,p,p,p,p,p,B.j,p,p,B.h9,p,p,p,p,p,p,p)),p,1/0),n=A.a_c(B.jg,1.5),m=A.eQ(6),l=t.p,k=A.c([A.rR(A.cz(q.e?"Editing...":"Cleaned (tap to edit)",p,p,p,B.Sb,p,p),1)],l)
-if(q.e)k.push(A.afF(B.GV,B.VS,new A.ak6(q),A.Oa(p,p,p,p,p,p,p,p,p,B.jd,p,B.H,B.cS,p,p,p,p,B.hJ,p,p)))
+if(q.e)k.push(A.afF(B.GV,B.VT,new A.ak6(q),A.Oa(p,p,p,p,p,p,p,p,p,B.jd,p,B.H,B.cS,p,p,p,p,B.hJ,p,p)))
 k=A.eJ(k,B.a1,B.F,B.Q,0,p)
 s=q.e
 r=q.d
@@ -42703,7 +42703,7 @@ L(a){var s=null,r=this.e,q=A.a6(51,r.t()>>>16&255,r.t()>>>8&255,r.t()&255),p=A.e
 return A.hf(A.cz(this.c+": "+this.d,s,s,s,A.eO(s,s,r,s,s,s,s,s,s,s,s,12,s,s,B.bm,s,s,!0,s,s,s,s,s,s,s,s),s,s),B.A,s,new A.dp(q,s,s,p,s,s,B.aF),s,s,B.jE,s)}}
 A.Kx.prototype={
 L(a){var s=this,r=null,q=t.s
-return A.e4(A.c([B.Oj,B.bF,B.VN,B.Qe,A.hf(r,B.A,r,new A.dp(A.a6(B.d.aB(25.5),B.bP.t()>>>16&255,B.bP.t()>>>8&255,B.bP.t()&255),r,r,A.eQ(4),r,r,B.aF),r,r,B.ha,r),B.be,s.t5("Mild",A.c(["darn","gosh","heck","gee","jeez"],q),B.hI),B.cD,s.t5("Moderate",A.c(["damn","hell","crap","ass","piss","bummer"],q),B.kK),B.cD,s.t5("Strong",A.c(["sh*t","b*tch","b*stard","*sshole","bullsh*t"],q),B.Lt),B.cD,s.t5("Severe",A.c(["f*ck","motherf*cker"],q),B.eZ),B.cD,s.t5("Taking Name in Vain",A.c(["godd*mn","jesus christ","oh my god"],q),B.ux),B.cD,s.LY("Racial Slurs",A.c(["racial slurs"],q),B.Lp,!0)],t.p),B.ax,B.F,B.Q)},
+return A.e4(A.c([B.Oj,B.bF,B.VO,B.Qe,A.hf(r,B.A,r,new A.dp(A.a6(B.d.aB(25.5),B.bP.t()>>>16&255,B.bP.t()>>>8&255,B.bP.t()&255),r,r,A.eQ(4),r,r,B.aF),r,r,B.ha,r),B.be,s.t5("Mild",A.c(["darn","gosh","heck","gee","jeez"],q),B.hI),B.cD,s.t5("Moderate",A.c(["damn","hell","crap","ass","piss","bummer"],q),B.kK),B.cD,s.t5("Strong",A.c(["sh*t","b*tch","b*stard","*sshole","bullsh*t"],q),B.Lt),B.cD,s.t5("Severe",A.c(["f*ck","motherf*cker"],q),B.eZ),B.cD,s.t5("Taking Name in Vain",A.c(["godd*mn","jesus christ","oh my god"],q),B.ux),B.cD,s.LY("Racial Slurs",A.c(["racial slurs"],q),B.Lp,!0)],t.p),B.ax,B.F,B.Q)},
 LY(a,b,c,d){var s,r,q,p,o,n=this,m=null,l=A.Z(b),k=l.i("ag<1,k>"),j=A.a4(new A.ag(b,new A.a5O(),k),k.i("aq.E")),i=B.b.dK(j,new A.a5P(n))
 k=A.hf(m,B.A,m,new A.dp(c,m,m,A.eQ(2),m,m,B.aF),16,m,m,4)
 s=A.cz(a,m,m,m,A.eO(m,m,c,m,m,m,m,m,m,m,m,13,m,m,B.nZ,m,m,!0,m,m,m,m,m,m,m,m),m,m)
@@ -42790,7 +42790,7 @@ o.push(A.cz(a,n,n,n,A.eO(n,n,b||c?d:B.bQ,n,n,n,n,n,n,n,n,11,n,n,p,n,n,!0,n,n,n,n
 return A.rR(A.hf(A.eJ(o,B.a1,B.kH,B.Q,0,n),B.A,n,new A.dp(s,n,q,r,n,n,B.aF),n,n,B.jE,n),1)}}
 A.Nn.prototype={
 L(a){var s=this,r=null,q=s.d,p=q?r:new A.aem(s)
-return A.aui(new A.ck(B.jC,A.e4(A.c([B.Vx,B.be,A.auj(r,B.hw,r,p,B.VY,B.VE,s.r,r),B.be,new A.Kx(s.c,q,s.w,s.x,r),B.zm,B.Fx,B.zm,new A.xi("Adult Content",s.e,B.Jr,new A.aen(s),r),B.be,new A.xi("Violence",s.f,B.Iv,new A.aeo(s),r)],t.p),B.ax,B.F,B.Q),r))}}
+return A.aui(new A.ck(B.jC,A.e4(A.c([B.Vx,B.be,A.auj(r,B.hw,r,p,B.VL,B.VE,s.r,r),B.be,new A.Kx(s.c,q,s.w,s.x,r),B.zm,B.Fx,B.zm,new A.xi("Adult Content",s.e,B.Jr,new A.aen(s),r),B.be,new A.xi("Violence",s.f,B.Iv,new A.aeo(s),r)],t.p),B.ax,B.F,B.Q),r))}}
 A.aem.prototype={
 $1(a){return this.a.Q.$1(a!==!1)},
 $S:77}
@@ -42802,7 +42802,7 @@ $1(a){return this.a.z.$1(B.d.fp(a))},
 $S:37}
 A.y_.prototype={
 L(a){var s=null
-return A.fX(A.ma(B.H_,B.VL,this.c,A.rO(s,s,B.fU,s,s,s,s,s,s,B.j,s,s,B.G2,s,s,s,s,s,s,s)),s,1/0)}}
+return A.fX(A.ma(B.H_,B.VM,this.c,A.rO(s,s,B.fU,s,s,s,s,s,s,B.j,s,s,B.G2,s,s,s,s,s,s,s)),s,1/0)}}
 A.es.prototype={
 gaj(a){return new A.Bg(this.a,0,0)},
 ga2(a){var s=this.a,r=s.length
@@ -91433,8 +91433,8 @@ B.hI=new A.fT(B.Lj,1,0.2980392156862745,0.6862745098039216,0.3137254901960784,B.
 B.GW=new A.dT(B.o6,48,B.hI,null,null)
 B.bF=new A.eK(null,8,null,null)
 B.Th=new A.o(!0,null,null,null,null,null,16,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.VQ=new A.cc("All changes reviewed!",null,B.Th,null,null,null,null,null,null)
-B.Jg=s([B.GW,B.bF,B.VQ],t.p)
+B.VR=new A.cc("All changes reviewed!",null,B.Th,null,null,null,null,null,null)
+B.Jg=s([B.GW,B.bF,B.VR],t.p)
 B.EQ=new A.xc(B.aM,B.F,B.Q,B.a1,null,B.bW,null,0,B.Jg,null)
 B.MP=new A.ck(B.ny,B.EQ,null)
 B.CF=new A.lZ(B.ad,null,null,B.MP,null)
@@ -93953,21 +93953,21 @@ B.Rf=new A.o(!0,B.M,null,null,null,null,null,null,null,null,null,null,null,null,
 B.VJ=new A.cc("Sign In",null,B.Rf,null,null,null,null,null,null)
 B.U6=new A.o(!0,B.n4,null,null,null,null,12,B.bm,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
 B.VK=new A.cc("Original (Red = Potentially Offensive)",null,B.U6,null,null,null,null,null,null)
-B.VL=new A.cc("Export EPUB",null,null,null,null,null,null,null,null)
-B.VM=new A.cc("This will stop processing the book. Progress will be lost.",null,null,null,null,null,null,null,null)
-B.TM=new A.o(!0,B.bQ,null,null,null,null,13,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.VN=new A.cc('Check specific words you want removed (note, we will also try to remove variants of these words, e.g., "f*cking", "sh*tty"):',null,B.TM,null,null,null,null,null,null)
-B.VO=new A.cc("Next",null,null,null,null,null,null,null,null)
-B.VP=new A.cc("Continue Processing",null,null,null,null,null,null,null,null)
-B.VR=new A.cc("Continue",null,null,null,null,null,null,null,null)
 B.zU=new A.o(!0,null,null,null,null,null,12,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.VS=new A.cc("Reset",null,B.zU,null,null,null,null,null,null)
-B.VT=new A.cc("Live Log",null,B.dc,null,null,null,null,null,null)
-B.VU=new A.cc("Cancel Book",null,null,null,null,null,null,null,null)
-B.VV=new A.cc("Cancel Processing?",null,null,null,null,null,null,null,null)
-B.VW=new A.cc("Authentication Required",null,null,null,null,null,null,null,null)
-B.VX=new A.cc("Auto-scroll",null,null,null,null,null,null,null,null)
-B.VY=new A.cc("Removes unambiguous profanity (f*ck, sh*t, etc.) before AI processing. This is fast, deterministic, and catches obvious cases without using AI tokens.",null,B.zU,null,null,null,null,null,null)
+B.VL=new A.cc("Auto-replaces unambiguous profanity ('sh*t'\u2192'crud', '*sshole'\u2192'jerk'). Context-dependent words ('*ss', 'd*mn') are handled by AI based on your selections below.",null,B.zU,null,null,null,null,null,null)
+B.VM=new A.cc("Export EPUB",null,null,null,null,null,null,null,null)
+B.VN=new A.cc("This will stop processing the book. Progress will be lost.",null,null,null,null,null,null,null,null)
+B.TM=new A.o(!0,B.bQ,null,null,null,null,13,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
+B.VO=new A.cc('Check specific words you want removed (note, we will also try to remove variants of these words, e.g., "f*cking", "sh*tty"):',null,B.TM,null,null,null,null,null,null)
+B.VP=new A.cc("Next",null,null,null,null,null,null,null,null)
+B.VQ=new A.cc("Continue Processing",null,null,null,null,null,null,null,null)
+B.VS=new A.cc("Continue",null,null,null,null,null,null,null,null)
+B.VT=new A.cc("Reset",null,B.zU,null,null,null,null,null,null)
+B.VU=new A.cc("Live Log",null,B.dc,null,null,null,null,null,null)
+B.VV=new A.cc("Cancel Book",null,null,null,null,null,null,null,null)
+B.VW=new A.cc("Cancel Processing?",null,null,null,null,null,null,null,null)
+B.VX=new A.cc("Authentication Required",null,null,null,null,null,null,null,null)
+B.VY=new A.cc("Auto-scroll",null,null,null,null,null,null,null,null)
 B.W_=new A.Oq(0,"system")
 B.zW=new A.Oq(2,"dark")
 B.Mj=new A.i(0.056,0.024)
