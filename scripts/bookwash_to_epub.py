@@ -670,7 +670,40 @@ def create_epub(book: BookwashFile, output_path: str, mode: str,
             manifest_items.insert(0, '    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>')
             spine_items.insert(0, '    <itemref idref="cover"/>')
         
-        # 5. Create content.opf (package document)
+        # 5. Create BookWash attribution page (right after cover, before chapters)
+        from datetime import datetime
+        bookwash_xhtml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head>
+  <title>BookWash</title>
+  <meta charset="UTF-8"/>
+  <style type="text/css">
+    body {{ margin: 2em; padding: 0; font-family: serif; text-align: center; }}
+    .bookwash {{ margin-top: 40%; }}
+    .bookwash h2 {{ font-size: 1.2em; font-weight: normal; color: #666; margin-bottom: 0.5em; }}
+    .bookwash p {{ font-size: 0.85em; color: #999; margin: 0.3em 0; }}
+    .bookwash .separator {{ margin: 1em auto; width: 4em; border-top: 1px solid #ccc; }}
+  </style>
+</head>
+<body>
+  <div class="bookwash">
+    <h2>Cleaned by BookWash</h2>
+    <div class="separator"></div>
+    <p>{html_escape(book.title)}</p>
+    <p>{datetime.now().strftime('%B %d, %Y')}</p>
+  </div>
+</body>
+</html>'''
+        with open(os.path.join(temp_dir, 'OEBPS', 'bookwash.xhtml'), 'w', encoding='utf-8') as f:
+            f.write(bookwash_xhtml)
+        
+        # Insert after cover (index 1) or at the beginning (index 0)
+        bw_insert_idx = 1 if (cover_id and book.cover_image) else 0
+        manifest_items.insert(bw_insert_idx, '    <item id="bookwash" href="bookwash.xhtml" media-type="application/xhtml+xml"/>')
+        spine_items.insert(bw_insert_idx, '    <itemref idref="bookwash"/>')
+        
+        # 6. Create content.opf (package document)
         manifest_str = '\n'.join(manifest_items)
         spine_str = '\n'.join(spine_items)
         

@@ -36,6 +36,7 @@ class EpubWriter {
         ).writeAsBytes(coverFile.content as List<int>);
       }
 
+      await _createBookwashPage(tempDir, originalEpub);
       await _createChapters(
         tempDir,
         originalEpub,
@@ -75,6 +76,46 @@ class EpubWriter {
 
     final file = File(path.join(tempDir.path, 'META-INF', 'container.xml'));
     await file.writeAsString(containerXml);
+  }
+
+  Future<void> _createBookwashPage(
+    Directory tempDir,
+    ParsedEpub originalEpub,
+  ) async {
+    final now = DateTime.now();
+    final months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    final dateStr = '${months[now.month - 1]} ${now.day}, ${now.year}';
+    final title = _escapeXml(originalEpub.metadata.title);
+
+    final bookwashHtml = '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head>
+  <title>BookWash</title>
+  <meta charset="UTF-8"/>
+  <style type="text/css">
+    body { margin: 2em; padding: 0; font-family: serif; text-align: center; }
+    .bookwash { margin-top: 40%; }
+    .bookwash h2 { font-size: 1.2em; font-weight: normal; color: #666; margin-bottom: 0.5em; }
+    .bookwash p { font-size: 0.85em; color: #999; margin: 0.3em 0; }
+    .bookwash .separator { margin: 1em auto; width: 4em; border-top: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <div class="bookwash">
+    <h2>Cleaned by BookWash</h2>
+    <div class="separator"/>
+    <p>$title</p>
+    <p>$dateStr</p>
+  </div>
+</body>
+</html>''';
+
+    final file = File(path.join(tempDir.path, 'OEBPS', 'bookwash.xhtml'));
+    await file.writeAsString(bookwashHtml);
   }
 
   Future<void> _createChapters(
@@ -217,6 +258,11 @@ $paragraphsHtml
   ) async {
     final manifestItems = StringBuffer();
     final spineItems = StringBuffer();
+
+    manifestItems.writeln(
+      '    <item href="bookwash.xhtml" id="bookwash" media-type="application/xhtml+xml"/>',
+    );
+    spineItems.write('    <itemref idref="bookwash"/>\n');
 
     for (int i = 0; i < originalEpub.chapters.length; i++) {
       final chapter = originalEpub.chapters[i];

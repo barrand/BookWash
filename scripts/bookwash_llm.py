@@ -915,6 +915,15 @@ class GeminiClient:
                         time.sleep(wait_time)
                         continue
                     
+                    if response.status_code == 400:
+                        try:
+                            error_detail = response.json()
+                        except Exception:
+                            error_detail = response.text[:500]
+                        print(f"  ⚠️  400 Bad Request from {self.current_model}: {error_detail}")
+                        if self._switch_to_fallback():
+                            continue
+                    
                     self.consecutive_429s = 0  # Reset on success
                     response.raise_for_status()
                     data = response.json()
@@ -1637,7 +1646,16 @@ def _get_change_original(chapter, change_id: str) -> str:
 
 
 def _set_change_cleaned(chapter, change_id: str, cleaned_text: str):
-    """Set the #CLEANED content for a specific change ID."""
+    """Set the #CLEANED content for a specific change ID.
+    
+    If cleaned text is identical to original, marks the change as 'ok' (no edit needed)
+    so it won't appear in the review UI.
+    """
+    original_text = _get_change_original(chapter, change_id)
+    if cleaned_text.strip() == original_text.strip():
+        _set_change_status(chapter, change_id, 'ok')
+        return
+    
     new_lines = []
     in_target_change = False
     in_cleaned = False
@@ -1665,6 +1683,21 @@ def _set_change_cleaned(chapter, change_id: str, cleaned_text: str):
         else:
             new_lines.append(line)
     
+    chapter.content_lines = new_lines
+
+
+def _set_change_status(chapter, change_id: str, status: str):
+    """Set the #STATUS for a specific change ID."""
+    new_lines = []
+    for line in chapter.content_lines:
+        if line.startswith('#STATUS:'):
+            # Check if previous line was the target change
+            if new_lines and new_lines[-1].startswith('#CHANGE:'):
+                cid = new_lines[-1].split(':')[1].strip()
+                if cid == change_id:
+                    new_lines.append(f'#STATUS: {status}')
+                    continue
+        new_lines.append(line)
     chapter.content_lines = new_lines
 
 

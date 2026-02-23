@@ -151,7 +151,9 @@ class _BookWashHomeState extends State<BookWashHome> {
 
   Future<void> _loadSavedApiKey() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     final savedKey = prefs.getString('gemini_api_key') ?? '';
+    print('🔑 Loaded API key: ${savedKey.isEmpty ? "(empty)" : "${savedKey.substring(0, 8)}...${savedKey.substring(savedKey.length - 4)}"}');
     if (savedKey.isNotEmpty) {
       setState(() {
         geminiApiKey = savedKey;
@@ -531,6 +533,7 @@ class _BookWashHomeState extends State<BookWashHome> {
         'Target levels: Language: Filtering ${selectedWords.length} words, Adult=${_levelToRating(sexualContentLevel)}, Violence=${_levelToRating(violenceLevel)}',
       );
 
+      print('🔑 Using API key for LLM: ${geminiApiKey.isEmpty ? "(empty)" : "${geminiApiKey.substring(0, 8)}...${geminiApiKey.substring(geminiApiKey.length - 4)}"}');
       final llmArgs = [
         '--rate',
         '--clean-passes',
@@ -848,8 +851,10 @@ class _BookWashHomeState extends State<BookWashHome> {
     final changes = <MapEntry<int, BookWashChange>>[];
     for (int i = 0; i < bookwashFile!.chapters.length; i++) {
       for (final change in bookwashFile!.chapters[i].changes) {
-        // Only include pending changes that have cleaned content to review
-        if (change.status == 'pending' && change.cleaned.trim().isNotEmpty) {
+        // Only include pending changes that have cleaned content different from original
+        if (change.status == 'pending' &&
+            change.cleaned.trim().isNotEmpty &&
+            change.cleaned.trim() != change.original.trim()) {
           changes.add(MapEntry(i, change));
         }
       }
