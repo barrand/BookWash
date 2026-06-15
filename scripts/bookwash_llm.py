@@ -86,6 +86,8 @@ FALLBACK_MODELS = [
 ]
 # Model to use when PROHIBITED_CONTENT is detected (copyright detection bypass)
 PROHIBITED_CONTENT_FALLBACK_MODEL = 'gemini-2.0-flash'
+# Model to use for aggressive cleaning pass (stronger than default lite model)
+AGGRESSIVE_CLEANING_MODEL = 'gemini-2.5-flash'
 API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 
 # Parallel processing configuration
@@ -1958,6 +1960,7 @@ Chapter: {chapter_description}
 3. DO NOT change anything else - keep all other content identical
 4. Narrative descriptions like "he cursed" or "she swore" are ALLOWED - only remove actual offensive words
 5. You are doing LANGUAGE CLEANING only - never delete paragraphs or sentences (except profane words within them)
+6. Replace EVERY instance of each prohibited word — standalone exclamations, one-word sentences, and fragments included. A prohibited word alone on its own line must be replaced just like the same word mid-sentence.
 
 ⚠️ FORMATTING TAGS - CRITICAL ⚠️
 5. DO NOT ADD [B], [I], or any formatting tags that are not in the original text!
@@ -2035,8 +2038,11 @@ CLEANING APPROACH:
 - You may use "fade to black" transitions ("Later that evening...")
 - When in doubt about whether something is {rating_name}-appropriate, remove it
 
-REMEMBER: Poetic or metaphorical descriptions of sex are still descriptions of sex. 
+REMEMBER: Poetic or metaphorical descriptions of sex are still descriptions of sex.
 A beautifully written sex scene is still a sex scene - clean it accordingly.
+Also check for IMPLICIT sexual content: euphemisms, "fade to black" implications,
+suggestive descriptions of bodies in intimate contexts, and framing that evokes a
+sexual scene even without explicit language.
 
 RULES:
 1. Return ONLY the cleaned text - no explanations
@@ -2109,45 +2115,43 @@ VIOLENCE_FALLBACK = "A violent confrontation ensued."
 
 def build_aggressive_adult_prompt(target_adult: int, chapter_description: str = '') -> str:
     """Build an AGGRESSIVE prompt for adult content that failed normal cleaning.
-    
-    This prompt is much stricter - aims for G rating regardless of target,
-    removes rather than rewrites, and uses heavy summarization.
+
+    Uses generic context-preserving instructions rather than overfitted phrase lists.
+    Preserves character names and plot context while removing all sexual content.
     """
-    # Don't include chapter context in aggressive prompts - it leaks into output
-    # The LLM has enough context from the text itself
-    
-    return f"""⚠️ AGGRESSIVE CLEANING MODE - This content FAILED normal cleaning. Be EXTREMELY strict.
+    target_label = ADULT_RATINGS.get(target_adult, 'PG')
+    context_section = f"\nChapter context: {chapter_description}" if chapter_description else ""
 
-Your job is to COMPLETELY REMOVE all sexual/sensual content and replace with brief summaries.
+    return f"""⚠️ AGGRESSIVE CLEANING MODE — This content failed normal cleaning and must be cleaned more thoroughly.
 
-🚨 CRITICAL: YOUR OUTPUT MUST BE DIFFERENT FROM THE INPUT 🚨
-This text was already sent for cleaning and came back unchanged. That was WRONG.
-You MUST modify this text. Returning it unchanged is NOT acceptable.
+TARGET RATING: {target_label}
 
-AGGRESSIVE RULES:
-1. ANY description of bodies, touching, kissing, or physical intimacy → REMOVE entirely
-2. ANY suggestive dialogue or innuendo → REMOVE entirely  
-3. Replace removed content with a brief summary of what happened
-4. When in doubt → REMOVE IT. Better to lose content than keep anything questionable.
-5. This should be safe for a 10-year-old to read.
-6. DO NOT ADD chapter numbers, "Chapter X", or any headers that aren't in the original text.
-7. MATCH the narrative voice of the input. If the input uses "I", your output uses "I".
+Your task: Rewrite the passage to remove ALL sexual/sensual content, explicit or implied, while preserving the story.
 
-SPECIFIC PHRASES THAT MUST BE REMOVED (examples):
-- "clutch her hips" → sexual, REMOVE
-- "our rhythm" → sexual metaphor, REMOVE  
-- "she writhes" → sexual, REMOVE
-- "astride me" → sexual position, REMOVE
-- "her motion slows" (in sexual context) → REMOVE
-- Any mention of bodies moving together rhythmically → REMOVE
+WHAT TO PRESERVE (critical — do not strip these):
+- Character names and their relationships to each other
+- Why characters are in this scene and what it means for the plot
+- Emotional beats (embarrassment, tension, revelation, conflict)
+- Any non-sexual details that matter to the story
 
-DO NOT try to preserve the scene's mood or tension. Just summarize what happened plot-wise.
-If the input is describing a sex scene, your output should be 1-2 sentences like "They were together."
+WHAT TO REMOVE:
+- Physical/sexual descriptions of bodies or acts
+- Sensual or erotic atmosphere
+- Implied or euphemistic descriptions of sexual activity
+
+HOW TO HANDLE A SEX SCENE:
+Collapse it to 1-3 sentences that preserve who is involved, the emotional/plot significance, and any character revelations — without any physical or sensual detail.
+
+Example:
+ORIGINAL: "[Character A] was in bed and wasn't alone. [physical description of Character B's body and actions in intimate context]..."
+REWRITTEN: "[Character A] was with [Character B] in a private moment. [Any plot-relevant detail about who Character B is or why this scene matters — relationship history, stakes, revelation — with no physical detail.]"
 
 RULES:
-1. Return ONLY the cleaned text - no explanations
+1. Return ONLY the rewritten passage — no explanations
 2. It's OK to drastically shorten the text
-3. DO NOT ADD [B], [I], or any formatting tags
+3. DO NOT ADD [B], [I], or any formatting tags not present in the original
+4. DO NOT ADD chapter numbers or headers not present in the original
+5. MATCH the narrative voice of the input{context_section}
 
 Text to aggressively clean:
 """
@@ -3074,17 +3078,34 @@ def cmd_clean_passes(bw: BookWashFile, client: GeminiClient, filepath: Path,
                     if not original_text:
                         continue
                     
-                    # Re-clean adult content aggressively
+                    # Re-clean adult content aggressively using stronger model
                     if needs_adult and 'adult' in cleaning_types:
                         prompt = build_aggressive_adult_prompt(target_adult, chapter.description or '')
                         try:
-                            result = client._make_request(prompt, original_text, log_type='aggressive_adult')
+                            original_model = client.current_model
+                            client.current_model = AGGRESSIVE_CLEANING_MODEL
+                            try:
+                                result = client._make_request(prompt, original_text, log_type='aggressive_adult')
+                            finally:
+                                client.current_model = original_model
                             if result and result.strip():
-                                # Check if LLM returned unchanged content
+                                # Check if LLM returned unchanged content — make a focused summary call
                                 if result.strip() == original_text.strip():
-                                    thread_safe_print(f"\n    ⚠️  {change_id}: LLM returned unchanged content, forcing summary...")
-                                    # Force a summary
-                                    result = "They were together."
+                                    thread_safe_print(f"\n    ⚠️  {change_id}: LLM returned unchanged content, making context-preserving summary...")
+                                    summary_prompt = """This passage contains explicit sexual content. Write 1-3 sentences that:
+1. Name every character involved
+2. Describe what this moment means for the story (revelation, relationship shift, emotional impact)
+3. Contain NO physical, sexual, or sensual detail whatsoever
+
+Return ONLY the summary sentences."""
+                                    original_model = client.current_model
+                                    client.current_model = AGGRESSIVE_CLEANING_MODEL
+                                    try:
+                                        result = client._make_request(summary_prompt, original_text, log_type='aggressive_summary')
+                                    finally:
+                                        client.current_model = original_model
+                                    if not result.strip() or result.strip() == original_text.strip():
+                                        result = "[Scene omitted]"
                                 _set_change_cleaned(chapter, change_id, result)
                                 _mark_change_aggressive(chapter, change_id)
                                 aggressive_adult_cleaned += 1
