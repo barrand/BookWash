@@ -88,14 +88,29 @@ FALLBACK_MODELS = [
 PROHIBITED_CONTENT_FALLBACK_MODEL = 'gemini-2.0-flash'
 # Model to use for aggressive cleaning pass (stronger than default lite model)
 AGGRESSIVE_CLEANING_MODEL = 'gemini-2.5-flash'
-# BookWash version — read from pubspec.yaml (single source of truth)
+# BookWash version: {major from pubspec.yaml}.{YY}.{M}.{D}.{HH}.{MM} in Mountain Time
+# Major is the only manually-set part — bump it in pubspec.yaml to signal a release.
+# The date portion reflects the last git commit, giving an automatic build stamp.
 def _read_bookwash_version() -> str:
     try:
-        pubspec = Path(__file__).parent.parent / 'pubspec.yaml'
-        m = re.search(r'^version:\s*(\d+\.\d+)', pubspec.read_text(), re.MULTILINE)
-        return m.group(1) if m else '2.0'
+        import subprocess as _sp
+        repo_root = Path(__file__).parent.parent
+        pubspec = repo_root / 'pubspec.yaml'
+        m = re.search(r'^version:\s*(\d+)', pubspec.read_text(), re.MULTILINE)
+        major = m.group(1) if m else '2'
+
+        result = _sp.run(
+            ['git', 'log', '-1', '--format=%cd',
+             '--date=format-local:%y %m %d %H %M'],
+            capture_output=True, text=True, cwd=str(repo_root),
+            env={**__import__('os').environ, 'TZ': 'America/Denver'},
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            yy, mo, dd, hh, mm = result.stdout.strip().split()
+            return f'{major}.{yy}.{int(mo)}.{int(dd)}.{hh}.{mm}'
     except Exception:
-        return '2.0'
+        pass
+    return '2.0'
 
 BOOKWASH_VERSION = _read_bookwash_version()
 API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'

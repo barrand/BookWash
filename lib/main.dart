@@ -147,11 +147,37 @@ class _BookWashHomeState extends State<BookWashHome> {
   }
 
   Future<void> _loadAppVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final major = info.version.split('.').first;
+
+      final result = await Process.run(
+        'git',
+        ['log', '-1', '--format=%cd', '--date=format-local:%y %m %d %H %M'],
+        workingDirectory: Directory.current.path,
+        environment: {...Platform.environment, 'TZ': 'America/Denver'},
+      );
+
+      if (result.exitCode == 0) {
+        final parts = result.stdout.toString().trim().split(' ');
+        if (parts.length == 5) {
+          final yy = parts[0];
+          final mo = int.parse(parts[1]).toString();  // strip leading zero
+          final dd = int.parse(parts[2]).toString();  // strip leading zero
+          final hh = parts[3];
+          final mm = parts[4];
+          if (mounted) {
+            setState(() => _appVersion = '$major.$yy.$mo.$dd.$hh.$mm');
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      print('Could not compute version from git: $e');
+    }
+    // Fallback to major only from pubspec
     final info = await PackageInfo.fromPlatform();
-    // Use major.minor only (e.g. "2.0" from "2.0.0+1")
-    final parts = info.version.split('.');
-    final display = parts.length >= 2 ? '${parts[0]}.${parts[1]}' : info.version;
-    if (mounted) setState(() => _appVersion = display);
+    if (mounted) setState(() => _appVersion = info.version.split('.').first);
   }
 
   @override
