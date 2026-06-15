@@ -12,6 +12,9 @@ class EpubWriter {
     required ParsedEpub originalEpub,
     required List<String> cleanedParagraphs,
     required Map<int, int> paragraphToChapter,
+    String version = '2.0',
+    String adultRating = '',
+    String violenceRating = '',
   }) async {
     // Create temporary directory for EPUB structure
     final tempDir = await Directory.systemTemp.createTemp('epub_writer_');
@@ -36,7 +39,10 @@ class EpubWriter {
         ).writeAsBytes(coverFile.content as List<int>);
       }
 
-      await _createBookwashPage(tempDir, originalEpub);
+      await _createBookwashPage(tempDir, originalEpub,
+          version: version,
+          adultRating: adultRating,
+          violenceRating: violenceRating);
       await _createChapters(
         tempDir,
         originalEpub,
@@ -80,8 +86,11 @@ class EpubWriter {
 
   Future<void> _createBookwashPage(
     Directory tempDir,
-    ParsedEpub originalEpub,
-  ) async {
+    ParsedEpub originalEpub, {
+    String version = '2.0',
+    String adultRating = '',
+    String violenceRating = '',
+  }) async {
     final now = DateTime.now();
     final months = [
       'January', 'February', 'March', 'April', 'May', 'June',
@@ -89,6 +98,14 @@ class EpubWriter {
     ];
     final dateStr = '${months[now.month - 1]} ${now.day}, ${now.year}';
     final title = _escapeXml(originalEpub.metadata.title);
+
+    final settingsLines = StringBuffer();
+    if (adultRating.isNotEmpty) {
+      settingsLines.write('\n    <p>Adult: ${_escapeXml(adultRating)}</p>');
+    }
+    if (violenceRating.isNotEmpty) {
+      settingsLines.write('\n    <p>Violence: ${_escapeXml(violenceRating)}</p>');
+    }
 
     final bookwashHtml = '''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -106,10 +123,10 @@ class EpubWriter {
 </head>
 <body>
   <div class="bookwash">
-    <h2>Cleaned by BookWash</h2>
+    <h2>Cleaned by BookWash $version</h2>
     <div class="separator"/>
     <p>$title</p>
-    <p>$dateStr</p>
+    <p>$dateStr</p>${settingsLines.toString()}
   </div>
 </body>
 </html>''';

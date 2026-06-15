@@ -61,8 +61,10 @@ class BookwashFile:
     author: str
     language: str
     source_epub: str
-    assets_folder: str = ""  # Folder containing images
-    cover_image: str = ""    # Cover image filename
+    assets_folder: str = ""
+    cover_image: str = ""
+    version: str = "1.0"
+    settings: dict = field(default_factory=dict)
     chapters: list = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
 
@@ -86,31 +88,43 @@ def parse_bookwash(filepath: str) -> BookwashFile:
     if header_match:
         header = header_match.group(0)
         
+        version_match = re.search(r'#BOOKWASH\s+(\S+)', header)
+        if version_match:
+            book.version = version_match.group(1).strip()
+
         title_match = re.search(r'#TITLE:\s*(.+)', header)
         if title_match:
             book.title = title_match.group(1).strip()
-        
+
         author_match = re.search(r'#AUTHOR:\s*(.+)', header)
         if author_match:
             book.author = author_match.group(1).strip()
-        
+
         lang_match = re.search(r'#LANGUAGE:\s*(.+)', header)
         if lang_match:
             book.language = lang_match.group(1).strip()
-        
+
         source_match = re.search(r'#SOURCE:\s*(.+)', header)
         if source_match:
             book.source_epub = source_match.group(1).strip()
-        
+
         # Parse assets folder path
         assets_match = re.search(r'#ASSETS:\s*(.+)', header)
         if assets_match:
             book.assets_folder = assets_match.group(1).strip()
-        
+
         # Parse cover image filename
         cover_match = re.search(r'#IMAGE:\s*(.+)', header)
         if cover_match:
             book.cover_image = cover_match.group(1).strip()
+
+        # Parse cleaning settings (e.g. target_adult=PG target_violence=R)
+        settings_match = re.search(r'#SETTINGS:\s*(.+)', header)
+        if settings_match:
+            for part in settings_match.group(1).strip().split():
+                if '=' in part:
+                    k, v = part.split('=', 1)
+                    book.settings[k.strip()] = v.strip()
         
         # If no title found, derive from source filename
         if not book.title and book.source_epub:
@@ -672,6 +686,14 @@ def create_epub(book: BookwashFile, output_path: str, mode: str,
         
         # 5. Create BookWash attribution page (right after cover, before chapters)
         from datetime import datetime
+        settings = book.settings
+        target_adult = settings.get('target_adult', '')
+        target_violence = settings.get('target_violence', '')
+        settings_lines = ''
+        if target_adult:
+            settings_lines += f'\n    <p>Adult: {html_escape(target_adult)}</p>'
+        if target_violence:
+            settings_lines += f'\n    <p>Violence: {html_escape(target_violence)}</p>'
         bookwash_xhtml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -688,10 +710,10 @@ def create_epub(book: BookwashFile, output_path: str, mode: str,
 </head>
 <body>
   <div class="bookwash">
-    <h2>Cleaned by BookWash</h2>
+    <h2>Cleaned by BookWash {html_escape(book.version)}</h2>
     <div class="separator"></div>
     <p>{html_escape(book.title)}</p>
-    <p>{datetime.now().strftime('%B %d, %Y')}</p>
+    <p>{datetime.now().strftime('%B %d, %Y')}</p>{settings_lines}
   </div>
 </body>
 </html>'''

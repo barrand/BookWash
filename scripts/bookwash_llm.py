@@ -88,6 +88,8 @@ FALLBACK_MODELS = [
 PROHIBITED_CONTENT_FALLBACK_MODEL = 'gemini-2.0-flash'
 # Model to use for aggressive cleaning pass (stronger than default lite model)
 AGGRESSIVE_CLEANING_MODEL = 'gemini-2.5-flash'
+# BookWash file format version written to new/updated .bookwash files
+BOOKWASH_VERSION = '2.0'
 API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 
 # Parallel processing configuration
@@ -519,6 +521,10 @@ def write_bookwash(bw: BookWashFile, filepath: Path):
     
     # Write header
     for line in bw.header_lines:
+        # Stamp current version on the #BOOKWASH line
+        if line.startswith('#BOOKWASH'):
+            lines.append(f'#BOOKWASH {BOOKWASH_VERSION}')
+            continue
         # Update MODIFIED timestamp
         if line.startswith('#MODIFIED:'):
             continue  # Skip old modified line
@@ -981,16 +987,21 @@ class GeminiClient:
                     block_reason = prompt_feedback.get('blockReason', '')
                     if block_reason:
                         # Check if it's PROHIBITED_CONTENT (copyright detection)
-                        if block_reason == 'PROHIBITED_CONTENT' and self.current_model != PROHIBITED_CONTENT_FALLBACK_MODEL:
+                        # _in_prohibited_content_fallback prevents recursive re-entry: if the
+                        # fallback call also hits PROHIBITED_CONTENT after model cycling, we
+                        # must not spawn another fallback or this loops indefinitely.
+                        if block_reason == 'PROHIBITED_CONTENT' and self.current_model != PROHIBITED_CONTENT_FALLBACK_MODEL and not getattr(self, '_in_prohibited_content_fallback', False):
                             print(f"  ⚠️  {block_reason} detected, retrying with {PROHIBITED_CONTENT_FALLBACK_MODEL}...")
                             # Temporarily switch to fallback model and retry
                             original_model = self.current_model
                             self.current_model = PROHIBITED_CONTENT_FALLBACK_MODEL
+                            self._in_prohibited_content_fallback = True
                             try:
                                 result = self._make_request(prompt, text, max_retries=3, log_type=log_type)
                                 return result
                             finally:
                                 self.current_model = original_model
+                                self._in_prohibited_content_fallback = False
                         
                         print(f"  ⚠️  Prompt blocked: {block_reason}")
                         safety_ratings = prompt_feedback.get('safetyRatings', [])
@@ -2119,7 +2130,7 @@ def build_aggressive_adult_prompt(target_adult: int, chapter_description: str = 
     Uses generic context-preserving instructions rather than overfitted phrase lists.
     Preserves character names and plot context while removing all sexual content.
     """
-    target_label = ADULT_RATINGS.get(target_adult, 'PG')
+    target_label = LEVEL_TO_RATING.get(target_adult, 'PG')
     context_section = f"\nChapter context: {chapter_description}" if chapter_description else ""
 
     return f"""⚠️ AGGRESSIVE CLEANING MODE — This content failed normal cleaning and must be cleaned more thoroughly.

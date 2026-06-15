@@ -399,8 +399,10 @@ class _BookWashHomeState extends State<BookWashHome> {
         outputPath: outputPath,
         originalEpub: parsedEpub!,
         cleanedParagraphs: cleanedParagraphs,
-        paragraphToChapter:
-            cleanedParagraphToChapter, // Use the cleaned mapping
+        paragraphToChapter: cleanedParagraphToChapter,
+        version: '2.0',
+        adultRating: _levelToRating(sexualContentLevel),
+        violenceRating: _levelToRating(violenceLevel),
       );
 
       if (mounted) {
