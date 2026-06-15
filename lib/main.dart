@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as path;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,6 +48,7 @@ class BookWashHome extends StatefulWidget {
 }
 
 class _BookWashHomeState extends State<BookWashHome> {
+  String _appVersion = '2.0';
   String? selectedFilePath;
   String? selectedFileName;
   ParsedEpub? parsedEpub;
@@ -141,6 +143,15 @@ class _BookWashHomeState extends State<BookWashHome> {
     super.initState();
     _loadSavedApiKey();
     _loadSavedLevels();
+    _loadAppVersion();
+  }
+
+  Future<void> _loadAppVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    // Use major.minor only (e.g. "2.0" from "2.0.0+1")
+    final parts = info.version.split('.');
+    final display = parts.length >= 2 ? '${parts[0]}.${parts[1]}' : info.version;
+    if (mounted) setState(() => _appVersion = display);
   }
 
   @override
@@ -400,7 +411,7 @@ class _BookWashHomeState extends State<BookWashHome> {
         originalEpub: parsedEpub!,
         cleanedParagraphs: cleanedParagraphs,
         paragraphToChapter: cleanedParagraphToChapter,
-        version: '2.0',
+        version: _appVersion,
         adultRating: _levelToRating(sexualContentLevel),
         violenceRating: _levelToRating(violenceLevel),
       );

@@ -88,8 +88,16 @@ FALLBACK_MODELS = [
 PROHIBITED_CONTENT_FALLBACK_MODEL = 'gemini-2.0-flash'
 # Model to use for aggressive cleaning pass (stronger than default lite model)
 AGGRESSIVE_CLEANING_MODEL = 'gemini-2.5-flash'
-# BookWash file format version written to new/updated .bookwash files
-BOOKWASH_VERSION = '2.0'
+# BookWash version — read from pubspec.yaml (single source of truth)
+def _read_bookwash_version() -> str:
+    try:
+        pubspec = Path(__file__).parent.parent / 'pubspec.yaml'
+        m = re.search(r'^version:\s*(\d+\.\d+)', pubspec.read_text(), re.MULTILINE)
+        return m.group(1) if m else '2.0'
+    except Exception:
+        return '2.0'
+
+BOOKWASH_VERSION = _read_bookwash_version()
 API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 
 # Parallel processing configuration
