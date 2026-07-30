@@ -490,15 +490,11 @@ def build_holdout_suite() -> List[TestParagraph]:
     ]
 
 
-def rate_text(text: str, model: str = "gemini-1.5-flash") -> dict:
+def rate_text(text: str, model: str = "gemini-3.5-flash-lite") -> dict:
     """Rate text using bookwash_llm.py logic."""
-    import google.generativeai as genai
-    
     api_key = os.environ.get('GEMINI_API_KEY', '')
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable not set")
-    
-    genai.configure(api_key=api_key)
     
     # Use the same rating prompt from bookwash_llm.py with proper definitions
     rating_prompt = f'''You are a content rating assistant. Rate the following text for:
@@ -542,14 +538,14 @@ Respond with ONLY a JSON object in this format:
 Text to rate:
 {text}'''
 
-    model_instance = genai.GenerativeModel(model)
-    response = model_instance.generate_content(rating_prompt)
+    client = bookwash_llm.GeminiClient(api_key=api_key, model=model)
+    response_text = client._make_request(rating_prompt, text, log_type='rating')
     
     import json
     import re
     
     # Extract JSON from response
-    response_text = response.text.strip()
+    response_text = response_text.strip()
     # Try to find JSON in the response
     json_match = re.search(r'\{[^}]+\}', response_text)
     if json_match:
@@ -558,7 +554,7 @@ Text to rate:
         raise ValueError(f"Could not parse rating response: {response_text}")
 
 
-def run_test_suite(paragraphs: List[TestParagraph], rate_only: bool = False, model: str = "gemini-1.5-flash"):
+def run_test_suite(paragraphs: List[TestParagraph], rate_only: bool = False, model: str = "gemini-3.5-flash-lite"):
     """Run test suite and compute confusion matrices."""
     
     # Separate matrices for each category
@@ -874,7 +870,7 @@ def create_temp_bookwash_file(chapter: PipelineTestChapter, temp_dir: Path) -> P
     return filepath
 
 
-def run_pipeline_tests(chapters: List[PipelineTestChapter], model: str = "gemini-2.0-flash", verbose: bool = False, save_output_dir: Optional[str] = None):
+def run_pipeline_tests(chapters: List[PipelineTestChapter], model: str = "gemini-3.5-flash-lite", verbose: bool = False, save_output_dir: Optional[str] = None):
     """Run full pipeline tests on chapters.
     
     For each chapter:
@@ -1073,7 +1069,7 @@ def main():
     parser.add_argument('--rate-only', action='store_true', help='Only rate, do not clean (for test-suite/holdout)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     parser.add_argument('--save-output', type=str, default=None, help='Directory to save output .bookwash files (default: delete after test)')
-    parser.add_argument('--model', default='gemini-2.0-flash', help='Model to use')
+    parser.add_argument('--model', default='gemini-3.5-flash-lite', help='Model to use')
     parser.add_argument('--text', help='Custom text to test')
     parser.add_argument('--expected-language', default='G', help='Expected language rating')
     parser.add_argument('--expected-adult', default='G', help='Expected adult rating')

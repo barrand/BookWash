@@ -101,7 +101,7 @@ class _BookWashHomeState extends State<BookWashHome> {
   String geminiApiKey = '';
 
   // Model selection
-  String selectedModel = 'gemini-2.5-flash-lite'; // Default Gemini model
+  String selectedModel = 'gemini-3.5-flash-lite'; // Default Gemini model
 
   // Bookwash file state
   String? generatedBookwashPath;

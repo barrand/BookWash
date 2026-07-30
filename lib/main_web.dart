@@ -75,7 +75,7 @@ class _BookWashWebHomeState extends State<BookWashWebHome> {
   // Content levels
   int sexualContentLevel = 2; // Default: PG
   int violenceLevel = 4; // Default: Unfiltered
-  String selectedModel = 'gemini-2.5-flash-lite';
+  String selectedModel = 'gemini-3.5-flash-lite';
   bool enablePrefilter = true; // Default: enabled
 
   // Logs

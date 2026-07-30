@@ -26,7 +26,7 @@ Usage:
 
 Environment:
     GEMINI_API_KEY - API key (or use --api-key)
-    GEMINI_MODEL - Model name (default: gemini-2.0-flash)
+    GEMINI_MODEL - Model name (default: gemini-3.5-flash-lite)
 """
 
 import argparse
@@ -79,15 +79,15 @@ LEVEL_TO_RATING = {
     5: 'X',
 }
 
-DEFAULT_MODEL = 'gemini-2.5-flash-lite'
+DEFAULT_MODEL = 'gemini-3.5-flash-lite'
 FALLBACK_MODELS = [
-    'gemini-2.0-flash-lite',   # Fallback when 2.5 hits rate limit
-    'gemini-2.5-flash-lite',   # Retry 2.5 after 2.0 hits limit (ping-pong)
+    'gemini-3.6-flash',        # Stronger fallback when the lite model is rate limited
+    'gemini-3.5-flash-lite',   # Retry the primary model after the fallback
 ]
 # Model to use when PROHIBITED_CONTENT is detected (copyright detection bypass)
-PROHIBITED_CONTENT_FALLBACK_MODEL = 'gemini-2.0-flash'
+PROHIBITED_CONTENT_FALLBACK_MODEL = 'gemini-3.6-flash'
 # Model to use for aggressive cleaning pass (stronger than default lite model)
-AGGRESSIVE_CLEANING_MODEL = 'gemini-2.5-flash'
+AGGRESSIVE_CLEANING_MODEL = 'gemini-3.6-flash'
 # BookWash version: {major from pubspec.yaml}.{YY}.{M}.{D}.{HH}.{MM} in Mountain Time
 # Major is the only manually-set part — bump it in pubspec.yaml to signal a release.
 # The date portion reflects the last git commit, giving an automatic build stamp.
@@ -911,8 +911,6 @@ class GeminiClient:
                     'parts': [{'text': f'{prompt}\n\n{text}'}]
                 }],
                 'generationConfig': {
-                    'temperature': 0.1,
-                    'topP': 0.9,
                     'maxOutputTokens': 8192,
                 },
                 'safetySettings': [

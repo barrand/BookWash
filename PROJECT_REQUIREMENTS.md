@@ -181,7 +181,7 @@ BookWash moderates EPUB books using an AI model to remove or adjust language, se
 ## Services
 - **FastAPI Backend**: SSE, session persistence, auth, cleanup.
 - **Flutter Web Frontend**: Upload, logs, review, export, cancel; build under `build/web`.
-- **Gemini API**: Requires `GEMINI_API_KEY`; model fallback ping-pong between `gemini-2.0-flash` and `gemini-1.5-flash` on 429.
+- **Gemini API**: Requires `GEMINI_API_KEY`; uses `gemini-3.5-flash-lite` by default and falls back to `gemini-3.6-flash` on repeated rate limits.
 - **Render Deployment**: Configure Persistent Disk to preserve `webapp/sessions`. Consider mounting at `/data/sessions` and making it configurable.
 
 ## Environment Variables

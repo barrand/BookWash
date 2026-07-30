@@ -123,7 +123,7 @@ At the time of this writing, you can try BookWash for free here: https://bookwas
     
     **Note:** The web version requires Python 3.9+ and the following packages:
     ```bash
-    pip install fastapi uvicorn google-generativeai ebooklib beautifulsoup4 lxml
+    pip install fastapi uvicorn ebooklib beautifulsoup4 lxml
     ```
 
 ### EPUB Clipper (Testing Helper)

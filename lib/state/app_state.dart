@@ -65,7 +65,7 @@ class AppState extends ChangeNotifier {
 
   // API and model settings
   String geminiApiKey = '';
-  String selectedModel = 'gemini-2.5-flash-lite';
+  String selectedModel = 'gemini-3.5-flash-lite';
 
   // Bookwash file state
   String? generatedBookwashPath;

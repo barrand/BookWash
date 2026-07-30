@@ -53,7 +53,7 @@ class ProcessRequest(BaseModel):
     language_words: List[str] = []
     adult_level: int = 2
     violence_level: int = 3
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-3.5-flash-lite"
     enable_prefilter: bool = True
 
 
@@ -368,7 +368,7 @@ async def start_processing_form(
     target_language: int = Form(2),
     target_adult: int = Form(2),
     target_violence: int = Form(3),
-    model: str = Form("gemini-2.0-flash")
+    model: str = Form("gemini-3.5-flash-lite")
 ):
     """Start processing with form data (maps to JSON endpoint internally)"""
     # Convert form parameters to ProcessRequest

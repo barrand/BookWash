@@ -479,7 +479,7 @@ class _LocalSession {
   String? error;
   int targetAdult = 2;
   int targetViolence = 3;
-  String model = 'gemini-2.0-flash';
+  String model = 'gemini-3.5-flash-lite';
   bool enablePrefilter = true;
   List<LogMessage> logs = [];
   List<ChangeItem> changes = [];
