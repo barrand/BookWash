@@ -2612,6 +2612,7 @@ def cmd_rate(bw: BookWashFile, client: GeminiClient,
     # Update settings in file
     bw.settings['target_adult'] = target_adult
     bw.settings['target_violence'] = target_violence
+    bw.settings['gemini_model'] = client.primary_model
     
     # Log the rating prompt for debugging/analysis
     rating_prompt = build_chapter_rating_prompt(client.language_words)
@@ -2663,6 +2664,7 @@ def cmd_clean_passes(bw: BookWashFile, client: GeminiClient, filepath: Path,
     """
     pipeline_start = time.time()
     phase_times = {}  # Track timing for each phase
+    bw.settings['gemini_model'] = client.primary_model
     
     target_adult = bw.target_adult
     target_violence = bw.target_violence

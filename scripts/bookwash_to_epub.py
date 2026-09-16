@@ -108,6 +108,14 @@ def parse_bookwash(filepath: str) -> BookwashFile:
         if source_match:
             book.source_epub = source_match.group(1).strip()
 
+        created_match = re.search(r'#CREATED:\s*(.+)', header)
+        if created_match:
+            book.metadata['created'] = created_match.group(1).strip()
+
+        modified_match = re.search(r'#MODIFIED:\s*(.+)', header)
+        if modified_match:
+            book.metadata['modified'] = modified_match.group(1).strip()
+
         # Parse assets folder path
         assets_match = re.search(r'#ASSETS:\s*(.+)', header)
         if assets_match:
@@ -690,10 +698,22 @@ def create_epub(book: BookwashFile, output_path: str, mode: str,
         target_adult = settings.get('target_adult', '')
         target_violence = settings.get('target_violence', '')
         settings_lines = ''
+        created = book.metadata.get('created')
+        modified = book.metadata.get('modified')
+        gemini_model = book.settings.get('gemini_model')
         if target_adult:
             settings_lines += f'\n    <p>Adult: {html_escape(target_adult)}</p>'
         if target_violence:
             settings_lines += f'\n    <p>Violence: {html_escape(target_violence)}</p>'
+        if gemini_model:
+            settings_lines += f'\n    <p>Gemini: {html_escape(gemini_model)}</p>'
+        else:
+            settings_lines += '\n    <p>Gemini: not recorded in this BookWash file</p>'
+        processing_lines = ''
+        if created:
+            processing_lines += f'\n    <p>Processed: {html_escape(created)}</p>'
+        if modified:
+            processing_lines += f'\n    <p>Last updated: {html_escape(modified)}</p>'
         bookwash_xhtml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -710,10 +730,10 @@ def create_epub(book: BookwashFile, output_path: str, mode: str,
 </head>
 <body>
   <div class="bookwash">
-    <h2>Cleaned by BookWash {html_escape(book.version)}</h2>
+    <h2>Cleaned with BookWash v{html_escape(book.version)}</h2>
     <div class="separator"></div>
     <p>{html_escape(book.title)}</p>
-    <p>{datetime.now().strftime('%B %d, %Y')}</p>{settings_lines}
+    <p>Exported: {datetime.now().strftime('%B %d, %Y')}</p>{processing_lines}{settings_lines}
   </div>
 </body>
 </html>'''

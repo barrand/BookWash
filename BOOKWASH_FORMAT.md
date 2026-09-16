@@ -150,6 +150,7 @@ The file must begin with a header containing metadata.
 | `clean_language` | `true` \| `false` | Whether to clean profanity (binary, not rated) |
 | `target_adult` | `G` \| `PG` \| `PG-13` \| `R` \| `X` | User's desired adult content level |
 | `target_violence` | `G` \| `PG` \| `PG-13` \| `R` \| `X` | User's desired violence level |
+| `gemini_model` | Gemini model identifier | Primary Gemini model used for rating and cleaning |
 
 ---
 
