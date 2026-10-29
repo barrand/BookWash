@@ -1,10 +1,18 @@
-# BookWash: AI-Powered Content Moderation for eBooks
+# BookWash
 
-Did you ever quit reading a book because there was just too much d\*mn profanity? Or racy scenes that made you uncomfortable? Maybe you wanted to share a great story with a younger reader, but the content was just a little too mature.
+BookWash is a Flutter application for creating a more age-appropriate or personally comfortable copy of an EPUB book without altering the original. It uses Google Gemini to identify language, sexual content, and violence that exceed the reading limits you choose; proposes narrative-aware rewrites; and lets you review the changes before exporting a new EPUB.
 
-If you've ever wished you could just *wash* the questionable parts out of a book, then **BookWash is for you!**
+It is intended for readers, families, and educators who want more control over a book’s content while retaining as much of the story, tone, and character development as possible. BookWash does not claim to be a definitive content-rating system: it is a review tool, and the generated EPUB should always be checked before sharing or relying on it.
 
-BookWash is a desktop application built with Flutter that allows you to "wash" your EPUB books. It uses the power of Google's Gemini AI to analyze and filter content based on your preferred sensitivity levels.
+## What BookWash Does
+
+1. Imports an EPUB and preserves the original file.
+2. Rates each chapter for language, adult content, and violence.
+3. Creates a human-readable `.bookwash` review file containing the original passage and Gemini’s proposed replacement.
+4. Lets you accept, reject, or edit proposed changes.
+5. Exports a separate EPUB with the resulting revisions and BookWash provenance information.
+
+The `.bookwash` format is plain text and keeps the original and cleaned versions side by side, making each edit auditable and reversible.
 
 ![BookWash Setup Screen](https://i.imgur.com/8P2JXcH.png) 
 Here is the setup screen that you'll see when running the app.
@@ -19,12 +27,13 @@ Here is the cleaning screen when the app is doing it's magic.
     *   **Language**: Checkbox-based selection of specific words to filter (e.g., select "damn", "hell", "shit", "fuck" or create your own custom list)
     *   **Sexual Content**: Rating levels (G, PG, PG-13, R)
     *   **Violence**: Rating levels (G, PG, PG-13, R)
-*   **AI-Powered Moderation**: Leverages the Google Gemini API to intelligently rate each chapter and then filter content that exceeds your chosen rating.
+*   **AI-Powered Moderation**: Uses the Google Gemini API to rate chapters and propose revisions for content that exceeds your chosen rating.
 *   **Smart Two-Pass System**:
     1.  **Rating Pass**: The AI first reads and rates each chapter without modifying it.
     2.  **Filtering Pass**: If a chapter's rating is more explicit than your setting, the AI will perform a second pass to clean it, rephrasing or removing inappropriate content while trying to preserve the narrative. This saves time and reduces API calls.
+*   **Reviewable Changes**: Keep, reject, or manually revise each proposed change before exporting.
 *   **Live Log**: See the app's progress in real-time as it processes your book chapter by chapter, including which chapters are being filtered and which are being skipped.
-*   **Generates New EPUB**: Outputs a new, cleaned EPUB file with `_cleaned` appended to the original filename. Your original file is never modified.
+*   **Generates New EPUB**: Outputs a separate, cleaned EPUB with BookWash version, processing settings, and model provenance. Your original file is never modified.
 *   **EPUB Clipper Utility**: Command-line script to extract a subset (first, middle, last) of chapters from a large EPUB for rapid testing.
 
 ## How It Works
